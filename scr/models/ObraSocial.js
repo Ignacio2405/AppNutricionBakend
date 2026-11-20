@@ -21,6 +21,14 @@ const obraSocialSchema = new mongoose.Schema({
             type: String,
             enum: Object.values(TelefonoEnum),
             default: TelefonoEnum.CELULAR
+        },
+        codigoArea: {
+            type: String,
+            required: true
+        },
+        numero: {
+            type: String,
+            required: true
         }
     },
     activo: {

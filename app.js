@@ -9,6 +9,13 @@ import { limitadorGlobal } from './scr/middlewares/rateLimit.middleware.js';
 import authRoutes from './scr/routes/auth.routes.js';
 import pacienteRoutes from './scr/routes/paciente.routes.js';
 import obraSocial from './scr/routes/obraSocial.routes.js';
+import medico from './scr/routes/medico.routes.js';
+import agenda from './scr/routes/agenda.routes.js';
+import turno from './scr/routes/turno.routes.js';
+import consulta from './scr/routes/consultaMedica.routes.js';
+import excpecion from './scr/routes/excepcionAgenda.routes.js';
+import historialMedico from './scr/routes/historialMedico.routes.js';
+import habitoAlimentario from './scr/routes/habitosAlimentarios.routes.js';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -37,9 +44,17 @@ app.get('/', (req, res) => {
 });
 
 // Tus rutas de la API
-app.use('/api/login', authRoutes);
+app.use('/api/auth', authRoutes);
 app.use('/api/pacientes', pacienteRoutes);
 app.use('/api/obraSocial', obraSocial);
+app.use('/api/medicos', medico);
+app.use('/api/agenda', agenda);
+app.use('/api/turno', turno);
+app.use('/api/consulta', consulta);
+app.use('/api/excepcion', excpecion)
+app.use('/api/historial-medico', historialMedico);
+app.use('/api/habitos', habitoAlimentario);
+
 
 
 const iniciarServidor = async () => {

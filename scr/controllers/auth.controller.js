@@ -4,7 +4,7 @@ import { Usuario } from '../models/Usuario.js';
 
 const JWT_SECRET = process.env.JWT_SECRET;
 
-export const login = async (req, res, next) => {
+export const login = async (req, res) => {
     try {
         const { email, password } = req.body;
 
@@ -36,11 +36,15 @@ export const login = async (req, res, next) => {
             debeCambiarPassword: usuario.debeCambiarPassword 
         });
     } catch (error) {
-        next(error);
+        return res.status(500).json({
+            ok: false,
+            mensaje: 'Error en el servidor al iniciar sesión',
+            error: error.message
+        });
     }
 };
 
-export const registro = async (req, res, next) => {
+export const registro = async (req, res) => {
     try {
         const { email, user, password, rol } = req.body;
 
@@ -71,16 +75,21 @@ export const registro = async (req, res, next) => {
                 mensaje: 'Email o usuario ya registrado'
             });
         }
-        next(error);
+        return res.status(500).json({
+            ok: false,
+            mensaje: 'Error en el servidor al registrar el usuario',
+            error: error.message
+        });
     }
 };
 
-export const cambiarPasswordPrimerLogin = async (req, res, next) => {
+export const cambiarPasswordPrimerLogin = async (req, res) => {
     try {
-        const usuarioId = req.usuario?.id;
-        const { passwordActual, nuevaPassword } = req.body;
+        const { passwordActual, nuevoPassword } = req.body;
+    
+        const userId = req.usuario?.id || req.usuario?._id;
 
-        const usuario = await Usuario.findById(usuarioId);
+        const usuario = await Usuario.findById(userId);
         if (!usuario) {
             return res.status(404).json({
                 ok: false,
@@ -88,6 +97,7 @@ export const cambiarPasswordPrimerLogin = async (req, res, next) => {
             });
         }
 
+        // Verificamos la contraseña actual
         const passwordOk = await bcrypt.compare(passwordActual, usuario.password);
         if (!passwordOk) {
             return res.status(400).json({
@@ -96,22 +106,25 @@ export const cambiarPasswordPrimerLogin = async (req, res, next) => {
             });
         }
 
-       
-        const hashedPassword = await bcrypt.hash(nuevaPassword, 10);
+        // Hasheamos la nueva contraseña
+        const salt = await bcrypt.genSalt(10);
+        const hashedPassword = await bcrypt.hash(nuevoPassword, salt);
 
-
+        // Actualizamos la contraseña y quitamos la obligación del primer login
         usuario.password = hashedPassword;
-        usuario.debeCambiarPassword = false;
+        usuario.debeCambiarPassword = false; 
         await usuario.save();
 
         return res.status(200).json({
             ok: true,
-            mensaje: 'Contraseña actualizada exitosamente'
+            mensaje: 'Contraseña actualizada con éxito'
         });
+
     } catch (error) {
+        console.error("Error al cambiar contraseña:", error);
         return res.status(500).json({
             ok: false,
-            mensaje: 'Error al cambiar la contraseña',
+            mensaje: 'Error en el servidor al cambiar la contraseña',
             error: error.message
         });
     }

@@ -1,9 +1,10 @@
 import { ObraSocial } from '../models/ObraSocial.js'; 
 
-export const getObrasSociales = async (req, res, next) => {
+
+export const getObrasSociales = async (req, res) => {
     try {
         const { razonSocial, cuit } = req.query;
-        const filtro = {};
+        const filtro = { activo: true }; 
 
         if (razonSocial) {
             filtro.razonSocial = { $regex: razonSocial.toUpperCase(), $options: 'I' };
@@ -11,8 +12,8 @@ export const getObrasSociales = async (req, res, next) => {
         if (cuit) {
             filtro.cuit = cuit;
         }
-
-        const obrasSociales = await ObraSocial.find(filtro);
+        
+        const obrasSociales = await ObraSocial.find(filtro).select('+activo');
 
         return res.status(200).json({
             ok: true,
@@ -20,19 +21,23 @@ export const getObrasSociales = async (req, res, next) => {
             data: obrasSociales
         });
     } catch (error) {
-        next(error);
+        return res.status(500).json({
+            ok: false,
+            mensaje: 'Error al obtener las obras sociales',
+            error: error.message
+        });
     }
 };
 
-export const getObraSocialById = async (req, res, next) => {
+export const getObraSocialById = async (req, res) => {
     try {
         const { id } = req.params;
-        const obraSocial = await ObraSocial.findById(id);
+        const obraSocial = await ObraSocial.findOne({ _id: id, activo: true }).select('+activo');
 
         if (!obraSocial) {
             return res.status(404).json({
                 ok: false,
-                mensaje: 'Obra social no encontrada'
+                mensaje: 'Obra social no encontrada o inactiva'
             });
         }
 
@@ -42,19 +47,24 @@ export const getObraSocialById = async (req, res, next) => {
             data: obraSocial
         });
     } catch (error) {
-        next(error);
+        return res.status(500).json({
+            ok: false,
+            mensaje: 'Error al obtener la obra social',
+            error: error.message
+        });
     }
 };
 
-export const createObraSocial = async (req, res, next) => {
+export const createObraSocial = async (req, res) => {
     try {
-        const { razonSocial, cuit, direccion, telefono } = req.body;
+        const { razonSocial, cuit, direccion, telefono, activo } = req.body;
 
         const nuevaObraSocial = await ObraSocial.create({
             razonSocial,
             cuit,
             direccion,
-            telefono
+            telefono,
+            activo
         });
 
         return res.status(201).json({
@@ -69,28 +79,32 @@ export const createObraSocial = async (req, res, next) => {
                 mensaje: 'Ya existe una obra social registrada con este CUIT'
             });
         }
-        next(error);
+        return res.status(500).json({
+            ok: false,
+            mensaje: 'Error al crear la obra social',
+            error: error.message
+        });
     }
 };
 
-export const updateObraSocial = async (req, res, next) => {
+export const updateObraSocial = async (req, res) => {
     try {
         const { id } = req.params;
         
-        const obraSocialActualizada = await ObraSocial.findByIdAndUpdate(
-            id,
+        const obraSocialActualizada = await ObraSocial.findOneAndUpdate(
+            { _id: id, activo: true }, 
             { $set: req.body },
             { 
                 returnDocument: 'after', 
                 runValidators: true,
                 context: 'query'
             }
-        );
+        ).select('+activo');
 
         if (!obraSocialActualizada) {
             return res.status(404).json({
                 ok: false,
-                mensaje: 'Obra social no encontrada'
+                mensaje: 'Obra social no encontrada o inactiva'
             });
         }
 
@@ -106,16 +120,25 @@ export const updateObraSocial = async (req, res, next) => {
                 mensaje: 'El CUIT ingresado ya pertenece a otra obra social'
             });
         }
-        next(error);
+        return res.status(500).json({
+            ok: false,
+            mensaje: 'Error al actualizar la obra social',
+            error: error.message
+        });
     }
 };
 
-export const deleteObraSocial = async (req, res, next) => {
+export const deleteObraSocial = async (req, res) => {
     try {
         const { id } = req.params;
-        const obraSocialBorrada = await ObraSocial.findByIdAndDelete(id);
+        
+        const obraSocialInactivada = await ObraSocial.findByIdAndUpdate(
+            id,
+            { $set: { activo: false } },
+            { returnDocument: 'after' }
+        ).select('+activo');
 
-        if (!obraSocialBorrada) {
+        if (!obraSocialInactivada) {
             return res.status(404).json({
                 ok: false,
                 mensaje: 'Obra social no encontrada'
@@ -124,10 +147,14 @@ export const deleteObraSocial = async (req, res, next) => {
 
         return res.status(200).json({
             ok: true,
-            mensaje: 'Obra social eliminada correctamente',
-            data: obraSocialBorrada
+            mensaje: 'Obra social dada de baja correctamente',
+            data: obraSocialInactivada
         });
     } catch (error) {
-        next(error);
+        return res.status(500).json({
+            ok: false,
+            mensaje: 'Error al dar de baja la obra social',
+            error: error.message
+        });
     }
 };
