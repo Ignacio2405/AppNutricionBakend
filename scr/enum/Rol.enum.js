@@ -1,6 +1,7 @@
 export const RolEnum = Object.freeze({
     ADMIN: 'ADMIN',
     RECEPCIONISTA:'RECEPCIONISTA',
+    MEDICO:'MEDICO',
     USER: 'USER',
-    INVITADO: 'INVITADO'
+    PACIENTE: 'PACIENTE'
 });

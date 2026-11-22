@@ -3,13 +3,16 @@ import { Router } from 'express';
 
 import { crearConsulta, obtenerConsultas, obtenerConsultaPorId, actualizarConsulta, eliminarConsulta
 } from '../controllers/consultaMedica.controller.js';
+import { verificarToken } from '../middlewares/verificaJWT.middlware.js';
+import { validarRol } from '../middlewares/validarRol.js';
+import { RolEnum } from '../enum/Rol.enum.js';
 
 const router = Router();
 
-router.post('/', crearConsulta);
-router.get('/', obtenerConsultas);
-router.get('/:id', obtenerConsultaPorId);
-router.put('/:id', actualizarConsulta);
-router.delete('/:id', eliminarConsulta);
+router.post('/',verificarToken, validarRol(RolEnum.MEDICO, RolEnum.ADMIN), crearConsulta);
+router.get('/',verificarToken, validarRol(RolEnum.MEDICO, RolEnum.ADMIN), obtenerConsultas);
+router.get('/:id',verificarToken, validarRol(RolEnum.MEDICO, RolEnum.ADMIN), obtenerConsultaPorId);
+router.put('/:id', verificarToken, validarRol(RolEnum.MEDICO, RolEnum.ADMIN), actualizarConsulta);
+router.delete('/:id', verificarToken, validarRol(RolEnum.MEDICO, RolEnum.ADMIN), eliminarConsulta);
 
 export default router;
