@@ -34,36 +34,38 @@ export const crearConsulta = async (req, res) => {
 };
 
 export const obtenerConsultas = async (req, res) => {
-    try {
+  try {
+    const filtro = { activo: true };
+    const { pacienteId } = req.query;
 
-        let filtro = { activo: true };
-
-        if (req.usuario.rol === 'paciente') {
-            filtro.paciente = req.usuario.paciente;
-        }
-
-        if (req.usuario.rol === 'medico') {
-            filtro.medico = req.usuario.medico;
-        }
-
-        const consultas = await ConsultaMedica.find(filtro)
-            .populate('paciente')
-            .populate('medico')
-            .sort({ fecha: -1 });
-
-        return res.status(200).json({
-            ok: true,
-            data: consultas
-        });
-
-    } catch (error) {
-        return res.status(500).json({
-            ok: false,
-            mensaje: 'Error al obtener las consultas'
-        });
+    if (pacienteId && mongoose.Types.ObjectId.isValid(pacienteId)) {
+      filtro.paciente = new mongoose.Types.ObjectId(pacienteId);
     }
-};
 
+    if (req.usuario.rol === "paciente") {
+      filtro.paciente = req.usuario.paciente;
+    }
+
+    if (req.usuario.rol === "medico" && req.usuario.medico) {
+      filtro.medico = req.usuario.medico;
+    }
+
+    const consultas = await ConsultaMedica.find(filtro)
+      .populate("paciente")
+      .populate("medico")
+      .sort({ fecha: -1 });
+
+    return res.status(200).json({
+      ok: true,
+      data: consultas,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      ok: false,
+      mensaje: "Error al obtener las consultas",
+    });
+  }
+};
 export const obtenerConsultaPorId = async (req, res) => {
     try {
         const consulta = await obtenerConsultaPorIdService(req.params.id);

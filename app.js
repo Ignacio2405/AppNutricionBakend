@@ -18,6 +18,7 @@ import historialMedico from './scr/routes/historialMedico.routes.js';
 import habitoAlimentario from './scr/routes/habitosAlimentarios.routes.js';
 import resultadosLaboratorioRoutes from "./scr/routes/resultadosLaboratorio.routes.js";
 import planComidasRoutes from "./scr/routes/planComidas.routes.js";
+import  MetaObjetivo from './scr/routes/metaObjetivo.routes.js';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -58,6 +59,7 @@ app.use('/api/historial-medico', historialMedico);
 app.use('/api/habitos', habitoAlimentario);
 app.use("/api/resultados-laboratorio", resultadosLaboratorioRoutes);
 app.use("/api/planes-comidas", planComidasRoutes);
+app.use('/api/metas-objetivos', MetaObjetivo);
 
 
 const iniciarServidor = async () => {

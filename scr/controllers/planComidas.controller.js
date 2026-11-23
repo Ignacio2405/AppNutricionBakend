@@ -1,7 +1,8 @@
 import mongoose from "mongoose";
 import { PlanComidas } from "../models/PlanComidas.js";
-import "../models/Consulta.js"; 
+import "../models/Consulta.js";
 import "../models/Paciente.js";
+
 const esObjectIdValido = (id) => mongoose.Types.ObjectId.isValid(id);
 
 // GET /api/planes-comidas
@@ -95,7 +96,9 @@ export const createPlanComidas = async (req, res) => {
   try {
     const {
       patientId,
+      paciente,
       consultationId,
+      consulta,
       titulo,
       fechaEntrega,
       fechaInicioVigencia,
@@ -106,14 +109,17 @@ export const createPlanComidas = async (req, res) => {
       advertencias,
     } = req.body;
 
-    if (!patientId || !esObjectIdValido(patientId)) {
+    const idPaciente = patientId || paciente;
+    const idConsulta = consultationId || consulta;
+
+    if (!idPaciente || !esObjectIdValido(idPaciente)) {
       return res.status(400).json({
         ok: false,
         mensaje: "Debés proporcionar un ID de paciente válido.",
       });
     }
 
-    if (consultationId && !esObjectIdValido(consultationId)) {
+    if (idConsulta && !esObjectIdValido(idConsulta)) {
       return res.status(400).json({
         ok: false,
         mensaje: "El ID de consulta proporcionado no es válido.",
@@ -122,14 +128,14 @@ export const createPlanComidas = async (req, res) => {
 
     if (Boolean(planActivo)) {
       await PlanComidas.updateMany(
-        { patientId, activo: true, planActivo: true },
+        { patientId: idPaciente, activo: true, planActivo: true },
         { $set: { planActivo: false } }
       );
     }
 
     const nuevoPlan = await PlanComidas.create({
-      patientId,
-      consultationId: consultationId || null,
+      patientId: idPaciente,
+      consultationId: idConsulta || null,
       titulo,
       fechaEntrega: fechaEntrega || new Date(),
       fechaInicioVigencia,
@@ -193,7 +199,9 @@ export const updatePlanComidas = async (req, res) => {
 
     const {
       patientId,
+      paciente,
       consultationId,
+      consulta,
       titulo,
       fechaEntrega,
       fechaInicioVigencia,
@@ -204,21 +212,25 @@ export const updatePlanComidas = async (req, res) => {
       advertencias,
     } = req.body;
 
-    if (patientId && !esObjectIdValido(patientId)) {
+    const idPaciente = patientId !== undefined ? patientId : paciente;
+    const idConsulta =
+      consultationId !== undefined ? consultationId : consulta;
+
+    if (idPaciente !== undefined && !esObjectIdValido(idPaciente)) {
       return res.status(400).json({
         ok: false,
         mensaje: "El ID de paciente no es válido.",
       });
     }
 
-    if (consultationId && !esObjectIdValido(consultationId)) {
+    if (idConsulta && !esObjectIdValido(idConsulta)) {
       return res.status(400).json({
         ok: false,
         mensaje: "El ID de consulta no es válido.",
       });
     }
 
-    const nuevoPatientId = patientId || planExistente.patientId;
+    const nuevoPatientId = idPaciente || planExistente.patientId;
 
     if (planActivo === true) {
       await PlanComidas.updateMany(
@@ -232,9 +244,9 @@ export const updatePlanComidas = async (req, res) => {
       );
     }
 
-    if (patientId !== undefined) planExistente.patientId = patientId;
-    if (consultationId !== undefined) {
-      planExistente.consultationId = consultationId || null;
+    if (idPaciente !== undefined) planExistente.patientId = idPaciente;
+    if (idConsulta !== undefined) {
+      planExistente.consultationId = idConsulta || null;
     }
     if (titulo !== undefined) planExistente.titulo = titulo;
     if (fechaEntrega !== undefined) planExistente.fechaEntrega = fechaEntrega;
