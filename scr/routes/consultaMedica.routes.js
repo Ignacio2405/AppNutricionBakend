@@ -9,10 +9,10 @@ import { RolEnum } from '../enum/Rol.enum.js';
 
 const router = Router();
 
-router.post('/',verificarToken, validarRol(RolEnum.MEDICO, RolEnum.ADMIN), crearConsulta);
+router.post('/',verificarToken, validarRol(RolEnum.MEDICO), crearConsulta);
 router.get('/',verificarToken, validarRol(RolEnum.MEDICO, RolEnum.ADMIN, RolEnum.PACIENTE), obtenerConsultas);
 router.get('/:id',verificarToken, validarRol(RolEnum.MEDICO, RolEnum.ADMIN, RolEnum.PACIENTE), obtenerConsultaPorId);
-router.put('/:id', verificarToken, validarRol(RolEnum.MEDICO, RolEnum.ADMIN), actualizarConsulta);
+router.put('/:id', verificarToken, validarRol(RolEnum.MEDICO), actualizarConsulta);
 router.delete('/:id', verificarToken, validarRol(RolEnum.MEDICO, RolEnum.ADMIN), eliminarConsulta);
 
 export default router;
