@@ -54,7 +54,7 @@ const metaObjetivoSchema = new Schema(
     },
     consultaId: {
       type: Types.ObjectId,
-      ref: "Consulta",
+      ref: "ConsultaMedica",
       default: null,
     },
     objetivos: {

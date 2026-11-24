@@ -1,115 +1,208 @@
+import mongoose from 'mongoose';
 import { Agenda } from '../models/Agenda.js';
+import { Medico } from '../models/Medico.js';
+import { RolEnum } from '../enum/Rol.enum.js';
 
-const getAgenda = async (req, res) => {    
-   try {
-        const { medico, diaSemana } = req.query;
-        const filtro = { activo: true }; 
+const buscarMedicoPorUsuario = async (usuario) => {
+  if (!usuario) return null;
+  const usuarioId = usuario.id || usuario._id;
+  const emailNormalizado = String(usuario.email || '').toLowerCase().trim();
 
-        if (medico) filtro.medico = medico;
-        if (diaSemana) filtro.diaSemana = diaSemana;
+  const filtroActivo = {
+    $or: [{ activo: true }, { activo: { $exists: false } }],
+  };
+  if (usuarioId && mongoose.Types.ObjectId.isValid(usuarioId)) {
+    const medicoVinculado = await Medico.findOne({
+      usuario: new mongoose.Types.ObjectId(usuarioId),
+      ...filtroActivo,
+    }).lean();
+    if (medicoVinculado) return medicoVinculado;
+  }
+  return emailNormalizado
+    ? Medico.findOne({ email: emailNormalizado, ...filtroActivo }).lean()
+    : null;
+};
 
-        const horario = await Agenda.find(filtro)
-            .populate('medico');    
+const getAgenda = async (req, res) => {
+  try {
+    const { medico, diaSemana } = req.query;
+    const usuario = req.usuario || req.user;
+    const rolUsuario = String(usuario?.rol || '').toUpperCase();
 
+    const filtro = { activo: true };
+
+    if (rolUsuario === RolEnum.MEDICO) {
+      const medicoDoc = await buscarMedicoPorUsuario(usuario);
+      if (!medicoDoc) {
         return res.status(200).json({
-            ok: true,
-            mensaje: 'Agenda obtenida correctamente',
-            data: horario
-        });    
+          ok: true,
+          mensaje: 'No se encontró un perfil médico asociado a tu usuario',
+          data: [],
+        });
+      }
+      filtro.medico = medicoDoc._id;
+    } else if (medico && mongoose.Types.ObjectId.isValid(medico)) {
+      filtro.medico = new mongoose.Types.ObjectId(medico);
+    }
 
-   } catch (error) {
-        return res.status(500).json({
-            ok: false,
-            mensaje: 'Error al obtener la agenda',
-            error: error.message
-        });    
-   }
+    if (diaSemana) filtro.diaSemana = diaSemana;
+
+    const horario = await Agenda.find(filtro).populate('medico');
+
+    return res.status(200).json({
+      ok: true,
+      mensaje: 'Agenda obtenida correctamente',
+      data: horario,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      ok: false,
+      mensaje: 'Error al obtener la agenda',
+      error: error.message,
+    });
+  }
 };
 
 const createAgenda = async (req, res) => {
-    try {
-        const nuevoHorario = await Agenda.create(req.body);
+  try {
+    const usuario = req.usuario || req.user;
+    const rolUsuario = String(usuario?.rol || '').toUpperCase();
+    const datos = { ...req.body };
 
-        return res.status(201).json({
-            ok: true,
-            mensaje: 'Agenda creada correctamente',
-            data: nuevoHorario
+    if (rolUsuario === RolEnum.MEDICO) {
+      const medicoDoc = await buscarMedicoPorUsuario(usuario);
+      if (!medicoDoc) {
+        return res.status(403).json({
+          ok: false,
+          mensaje: 'No se encontró un perfil médico asociado a tu usuario',
         });
-    } catch (error) {
-        return res.status(500).json({
-            ok: false,
-            mensaje: 'Error al crear la Agenda',
-            error: error.message
-        });
-    }    
+      }
+      datos.medico = medicoDoc._id;
+    }
+
+    if (!datos.medico || !mongoose.Types.ObjectId.isValid(datos.medico)) {
+      return res.status(400).json({
+        ok: false,
+        mensaje: 'Debe seleccionar un médico válido',
+      });
+    }
+
+    const nuevoHorario = await Agenda.create(datos);
+
+    return res.status(201).json({
+      ok: true,
+      mensaje: 'Agenda creada correctamente',
+      data: nuevoHorario,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      ok: false,
+      mensaje: 'Error al crear la Agenda',
+      error: error.message,
+    });
+  }
 };
 
 const updateAgenda = async (req, res) => {
-    try {
-        const { id } = req.params;
-        
-        const agendaActualizado = await Agenda.findOneAndUpdate(
-            { _id: id, activo: true },
-            { $set: req.body },
-            { 
-                returnDocument: 'after', 
-                runValidators: true,
-                context: 'query'
-            }
-        );    
+  try {
+    const { id } = req.params;
+    const usuario = req.usuario || req.user;
+    const rolUsuario = String(usuario?.rol || '').toUpperCase();
 
-        if (!agendaActualizado) {
-            return res.status(404).json({
-                ok: false,
-                mensaje: 'Horario de atención no encontrado o inactivo',
-                data: null
-            });
-        }
+    const filtro = { _id: id, activo: true };
 
-        return res.status(200).json({
-            ok: true,
-            mensaje: 'Horario de atención actualizado correctamente',
-            data: agendaActualizado
+    if (rolUsuario === RolEnum.MEDICO) {
+      const medicoDoc = await buscarMedicoPorUsuario(usuario);
+      if (!medicoDoc) {
+        return res.status(403).json({
+          ok: false,
+          mensaje: 'No se encontró un perfil médico asociado a tu usuario',
         });
-    } catch (error) {
-        return res.status(500).json({
-            ok: false,
-            mensaje: 'Error al actualizar la agenda',
-            error: error.message
-        });
-    }    
+      }
+      filtro.medico = medicoDoc._id;
+    }
+
+    const datosActualizacion = { ...req.body };
+    if (rolUsuario === RolEnum.MEDICO) {
+      delete datosActualizacion.medico;
+    }
+
+    const agendaActualizado = await Agenda.findOneAndUpdate(
+      filtro,
+      { $set: datosActualizacion },
+      {
+        returnDocument: 'after',
+        runValidators: true,
+        context: 'query',
+      },
+    );
+
+    if (!agendaActualizado) {
+      return res.status(404).json({
+        ok: false,
+        mensaje: 'Horario de atención no encontrado o inactivo',
+        data: null,
+      });
+    }
+
+    return res.status(200).json({
+      ok: true,
+      mensaje: 'Horario de atención actualizado correctamente',
+      data: agendaActualizado,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      ok: false,
+      mensaje: 'Error al actualizar la agenda',
+      error: error.message,
+    });
+  }
 };
-
 
 const deleteAgenda = async (req, res) => {
-    try {
-        const { id } = req.params;
+  try {
+    const { id } = req.params;
+    const usuario = req.usuario || req.user;
+    const rolUsuario = String(usuario?.rol || '').toUpperCase();
 
-        const agendaInactivado = await Agenda.findByIdAndUpdate(
-            id,
-            { $set: { activo: false } },
-            { returnDocument: 'after' }
-        );
+    const filtro = { _id: id };
 
-        if (!agendaInactivado) {
-            return res.status(404).json({
-                ok: false,
-                mensaje: 'Agenda no encontrado'
-            });
-        }
-
-        return res.status(200).json({
-            ok: true,
-            mensaje: 'Agenda dada de baja correctamente',
-            data: agendaInactivado
+    if (rolUsuario === RolEnum.MEDICO) {
+      const medicoDoc = await buscarMedicoPorUsuario(usuario);
+      if (!medicoDoc) {
+        return res.status(403).json({
+          ok: false,
+          mensaje: 'No se encontró un perfil médico asociado a tu usuario',
         });
-    } catch (error) {
-        return res.status(500).json({
-            ok: false,
-            mensaje: 'Error al dar de baja la agenda',
-            error: error.message
-        });
+      }
+      filtro.medico = medicoDoc._id;
     }
+
+    const agendaInactivado = await Agenda.findOneAndUpdate(
+      filtro,
+      { $set: { activo: false } },
+      { returnDocument: 'after' },
+    );
+
+    if (!agendaInactivado) {
+      return res.status(404).json({
+        ok: false,
+        mensaje: 'Agenda no encontrado',
+      });
+    }
+
+    return res.status(200).json({
+      ok: true,
+      mensaje: 'Agenda dada de baja correctamente',
+      data: agendaInactivado,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      ok: false,
+      mensaje: 'Error al dar de baja la agenda',
+      error: error.message,
+    });
+  }
 };
 
-export {getAgenda, createAgenda, updateAgenda, deleteAgenda };
+export { getAgenda, createAgenda, updateAgenda, deleteAgenda };

@@ -1,0 +1,14 @@
+export const MetodoPago = Object.freeze({
+  EFECTIVO: "EFECTIVO",
+  TRANSFERENCIA: "TRANSFERENCIA",
+  TARJETA_DEBITO: "TARJETA_DEBITO",
+  TARJETA_CREDITO: "TARJETA_CREDITO",
+  OBRA_SOCIAL: "OBRA_SOCIAL",
+  OTRO: "OTRO",
+});
+
+export const EstadoPago = Object.freeze({
+  PAGADO: "PAGADO",
+  PENDIENTE: "PENDIENTE",
+  ANULADO: "ANULADO",
+});

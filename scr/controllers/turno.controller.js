@@ -5,8 +5,10 @@ import { Agenda } from '../models/Agenda.js';
 import { ExcepcionAgenda } from '../models/ExcepcionAgenda.js';
 import { TipoExcepcion } from '../enum/ExepcionesTurno.enum.js';
 import mongoose from 'mongoose';
-import {Paciente} from '../models/Paciente.js';
+import { Paciente } from '../models/Paciente.js';
+import { Medico } from '../models/Medico.js';
 import { ConsultaMedica } from '../models/Consulta.js';
+import { RolEnum } from '../enum/Rol.enum.js';
 
 const DIAS_MAPA = {
   0: DiasSemanasEnum.DOMINGO,
@@ -30,7 +32,7 @@ const generarSlots = (horaInicio, horaFin, duracionMinutos) => {
   const slots = [];
   const [hInicio = 0, mInicio = 0] = horaInicio.split(':').map(Number);
   const [hFin = 0, mFin = 0] = horaFin.split(':').map(Number);
-  
+
   let minutosActuales = hInicio * 60 + mInicio;
   const minutosFin = hFin * 60 + mFin;
 
@@ -43,18 +45,88 @@ const generarSlots = (horaInicio, horaFin, duracionMinutos) => {
   return slots;
 };
 
+const buscarPacientePorUsuario = async (usuario) => {
+  if (!usuario) return null;
+  const usuarioId = usuario.id || usuario._id;
+  const emailNormalizado = String(usuario.email || '').toLowerCase().trim();
+
+  const condiciones = [];
+  if (usuarioId && mongoose.Types.ObjectId.isValid(usuarioId)) {
+    condiciones.push({ usuario: new mongoose.Types.ObjectId(usuarioId) });
+  }
+  if (emailNormalizado) {
+    condiciones.push({ email: emailNormalizado });
+  }
+  if (condiciones.length === 0) return null;
+
+  return Paciente.findOne({ $or: condiciones }).lean();
+};
+
+const buscarMedicoPorUsuario = async (usuario) => {
+  if (!usuario) return null;
+  const usuarioId = usuario.id || usuario._id;
+  const emailNormalizado = String(usuario.email || '').toLowerCase().trim();
+
+  const filtroActivo = {
+    $or: [{ activo: true }, { activo: { $exists: false } }],
+  };
+  if (usuarioId && mongoose.Types.ObjectId.isValid(usuarioId)) {
+    const medicoVinculado = await Medico.findOne({
+      usuario: new mongoose.Types.ObjectId(usuarioId),
+      ...filtroActivo,
+    }).lean();
+    if (medicoVinculado) return medicoVinculado;
+  }
+  return emailNormalizado
+    ? Medico.findOne({ email: emailNormalizado, ...filtroActivo }).lean()
+    : null;
+};
+
+const obtenerFiltroPorUsuario = async (usuario) => {
+  const rolUsuario = String(usuario?.rol || '').toUpperCase();
+
+  if (rolUsuario === RolEnum.PACIENTE) {
+    const pacienteDoc = await buscarPacientePorUsuario(usuario);
+    return pacienteDoc ? { paciente: pacienteDoc._id } : null;
+  }
+
+  if (rolUsuario === RolEnum.MEDICO) {
+    const medicoDoc = await buscarMedicoPorUsuario(usuario);
+    return medicoDoc ? { medico: medicoDoc._id } : null;
+  }
+
+  if ([RolEnum.ADMIN, RolEnum.RECEPCIONISTA].includes(rolUsuario)) return {};
+  return null;
+};
+
 export const getTurnos = async (req, res) => {
   try {
     const { id, medico, fecha } = req.query;
+    const usuario = req.usuario || req.user;
+    const alcance = await obtenerFiltroPorUsuario(usuario);
+    if (!alcance) {
+      return res.status(200).json({
+        ok: true,
+        mensaje: 'No se encontró un perfil asociado a tu usuario',
+        data: [],
+      });
+    }
 
-    const filtro = { activo: true };
+    const filtro = { ...alcance, activo: true };
+
+    if (!Object.keys(alcance).length && medico && mongoose.Types.ObjectId.isValid(medico)) {
+      filtro.medico = new mongoose.Types.ObjectId(medico);
+    }
+
+    if (id && !mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        ok: false,
+        mensaje: 'El ID del turno no es válido',
+      });
+    }
 
     if (id) {
       filtro._id = new mongoose.Types.ObjectId(id);
-    }
-
-    if (medico) {
-      filtro.medico = new mongoose.Types.ObjectId(medico);
     }
 
     if (fecha) {
@@ -68,8 +140,8 @@ export const getTurnos = async (req, res) => {
       select: 'nombre apellido obraSocial',
       populate: {
         path: 'obraSocial',
-        select: 'razonSocial' 
-      }
+        select: 'razonSocial',
+      },
     };
 
     const turnos = await Turno.find(filtro)
@@ -80,13 +152,13 @@ export const getTurnos = async (req, res) => {
     return res.status(200).json({
       ok: true,
       mensaje: 'Turnos obtenidos exitosamente',
-      data: turnos
+      data: turnos,
     });
   } catch (error) {
     return res.status(500).json({
       ok: false,
       mensaje: 'Error interno del servidor',
-      error: error.message
+      error: error.message,
     });
   }
 };
@@ -94,73 +166,106 @@ export const getTurnos = async (req, res) => {
 export const getTurnoById = async (req, res) => {
   try {
     const { id } = req.params;
+    const usuario = req.usuario || req.user;
+    const alcance = await obtenerFiltroPorUsuario(usuario);
+    if (!alcance) {
+      return res.status(403).json({
+        ok: false,
+        mensaje: 'No se encontró un perfil asociado a tu usuario',
+      });
+    }
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        ok: false,
+        mensaje: 'El ID del turno no es válido',
+      });
+    }
 
     const pacientePopulate = {
       path: 'paciente',
       select: 'nombre apellido obraSocial',
       populate: {
         path: 'obraSocial',
-        select: 'razonSocial'
-      }
+        select: 'razonSocial',
+      },
     };
 
-    const turno = await Turno.findById(id)
+    const turno = await Turno.findOne({ _id: id, ...alcance })
       .populate(pacientePopulate)
       .populate('medico', 'nombre apellido');
 
     if (!turno) {
       return res.status(404).json({
         ok: false,
-        mensaje: `Turno no encontrado con ID ${id}`
+        mensaje: `Turno no encontrado con ID ${id}`,
       });
     }
 
     return res.status(200).json({
       ok: true,
       mensaje: 'Turno obtenido exitosamente',
-      data: turno
+      data: turno,
     });
   } catch (error) {
     return res.status(400).json({
       ok: false,
       mensaje: 'ID con formato inválido',
-      error: error.message
+      error: error.message,
     });
   }
 };
 
 export const getTurnosDisponibles = async (req, res) => {
   try {
-    const { medico, fecha } = req.query;
+    let { medico, fecha } = req.query;
+    const usuario = req.usuario || req.user;
+    if (String(usuario?.rol || '').toUpperCase() === RolEnum.MEDICO) {
+      const medicoDoc = await buscarMedicoPorUsuario(usuario);
+      if (!medicoDoc) {
+        return res.status(403).json({
+          ok: false,
+          mensaje: 'No se encontró un perfil médico asociado a tu usuario',
+        });
+      }
+      medico = String(medicoDoc._id);
+    }
 
     if (!medico || !fecha) {
       return res.status(400).json({
         ok: false,
         mensaje: 'El ID del médico y la fecha son obligatorios',
-        data: null
+        data: null,
+      });
+    }
+
+    if (!mongoose.Types.ObjectId.isValid(medico)) {
+      return res.status(400).json({
+        ok: false,
+        mensaje: 'El ID del médico no es válido',
       });
     }
 
     const fechaObjTurno = new Date(fecha);
-    
+
     if (isNaN(fechaObjTurno.getTime())) {
       return res.status(400).json({
         ok: false,
-        mensaje: 'El formato de la fecha no es válido.'
+        mensaje: 'El formato de la fecha no es válido.',
       });
     }
 
     const anioT = fechaObjTurno.getUTCFullYear();
     const mesT = String(fechaObjTurno.getUTCMonth() + 1).padStart(2, '0');
     const diaT = String(fechaObjTurno.getUTCDate()).padStart(2, '0');
-   
+
     const fechaTurnoStr = `${anioT}-${mesT}-${diaT}`;
     const hoyStr = obtenerFechaHoyStr();
 
     if (fechaTurnoStr < hoyStr) {
       return res.status(400).json({
         ok: false,
-        mensaje: 'No se pueden consultar disponibilidades de fechas pasadas.'
+        mensaje: 'No se pueden consultar disponibilidades de fechas pasadas.',
       });
     }
 
@@ -174,7 +279,7 @@ export const getTurnosDisponibles = async (req, res) => {
       return res.status(400).json({
         ok: false,
         mensaje: 'La fecha proporcionada no es válida',
-        data: null
+        data: null,
       });
     }
 
@@ -182,7 +287,7 @@ export const getTurnosDisponibles = async (req, res) => {
     const excepcionDia = await ExcepcionAgenda.findOne({
       medico,
       fecha: { $gte: inicioDia, $lte: finDia },
-      activo: true
+      activo: true,
     });
 
     let todosLosSlots = [];
@@ -197,18 +302,26 @@ export const getTurnosDisponibles = async (req, res) => {
           mensaje: `El médico no atiende este día: ${motivoExcepcion}`,
           data: {
             fecha: fechaTurnoStr,
-            horariosDisponibles: []
-          }
+            horariosDisponibles: [],
+          },
         });
-      } else if (excepcionDia.tipo === TipoExcepcion.MODIFICACION_HORARIO && excepcionDia.horaInicio && excepcionDia.horaFin) {
+      } else if (
+        excepcionDia.tipo === TipoExcepcion.MODIFICACION_HORARIO &&
+        excepcionDia.horaInicio &&
+        excepcionDia.horaFin
+      ) {
         duracionTurno = excepcionDia.duracionTurnoMinutos || 30;
-        todosLosSlots = generarSlots(excepcionDia.horaInicio, excepcionDia.horaFin, duracionTurno);
+        todosLosSlots = generarSlots(
+          excepcionDia.horaInicio,
+          excepcionDia.horaFin,
+          duracionTurno,
+        );
       }
     } else {
       const horariosAtencion = await Agenda.find({
         medico: new mongoose.Types.ObjectId(medico),
         diaSemana: diaNombre,
-        activo: true
+        activo: true,
       });
 
       if (!horariosAtencion || horariosAtencion.length === 0) {
@@ -216,14 +329,18 @@ export const getTurnosDisponibles = async (req, res) => {
           ok: true,
           mensaje: 'El médico no atiende en el día seleccionado',
           data: {
-            horariosDisponibles: []
-          }
+            horariosDisponibles: [],
+          },
         });
       }
 
-      horariosAtencion.forEach(bloque => {
+      horariosAtencion.forEach((bloque) => {
         duracionTurno = bloque.duracionTurnoMinutos;
-        const slotsBloque = generarSlots(bloque.horaInicio, bloque.horaFin, bloque.duracionTurnoMinutos);
+        const slotsBloque = generarSlots(
+          bloque.horaInicio,
+          bloque.horaFin,
+          bloque.duracionTurnoMinutos,
+        );
         todosLosSlots = todosLosSlots.concat(slotsBloque);
       });
     }
@@ -233,11 +350,13 @@ export const getTurnosDisponibles = async (req, res) => {
       medico: new mongoose.Types.ObjectId(medico),
       fecha: { $gte: inicioDia, $lte: finDia },
       activo: true,
-      estado: { $ne: EstadoTurnoEnum.CANCELADO }
+      estado: { $ne: EstadoTurnoEnum.CANCELADO },
     });
 
-    const horasOcupadas = turnosOcupados.map(t => t.hora);
-    const horariosLibres = todosLosSlots.filter(slot => !horasOcupadas.includes(slot));
+    const horasOcupadas = turnosOcupados.map((t) => t.hora);
+    const horariosLibres = todosLosSlots.filter(
+      (slot) => !horasOcupadas.includes(slot),
+    );
 
     return res.status(200).json({
       ok: true,
@@ -246,29 +365,46 @@ export const getTurnosDisponibles = async (req, res) => {
         fecha: fechaTurnoStr,
         diaSemana: diaNombre,
         duracionTurnoMinutos: duracionTurno,
-        todosLosSlots,            
-        horariosDisponibles: horariosLibres 
-      }
+        todosLosSlots,
+        horariosDisponibles: horariosLibres,
+      },
     });
-
   } catch (error) {
     return res.status(500).json({
       ok: false,
       mensaje: 'Error al calcular los turnos disponibles',
-      error: error.message
+      error: error.message,
     });
   }
 };
 
 export const getDisponibilidadMes = async (req, res) => {
   try {
-    const { medico, anio, mes } = req.query;
+    let { medico, anio, mes } = req.query;
+    const usuario = req.usuario || req.user;
+    if (String(usuario?.rol || '').toUpperCase() === RolEnum.MEDICO) {
+      const medicoDoc = await buscarMedicoPorUsuario(usuario);
+      if (!medicoDoc) {
+        return res.status(403).json({
+          ok: false,
+          mensaje: 'No se encontró un perfil médico asociado a tu usuario',
+        });
+      }
+      medico = String(medicoDoc._id);
+    }
 
     if (!medico || !anio || !mes) {
       return res.status(400).json({
         ok: false,
         mensaje: 'Faltan parámetros obligatorios (medico, anio, mes)',
-        data: null
+        data: null,
+      });
+    }
+
+    if (!mongoose.Types.ObjectId.isValid(medico)) {
+      return res.status(400).json({
+        ok: false,
+        mensaje: 'El ID del médico no es válido',
       });
     }
 
@@ -279,14 +415,17 @@ export const getDisponibilidadMes = async (req, res) => {
       return res.status(400).json({
         ok: false,
         mensaje: 'Año o mes con formato inválido',
-        data: null
+        data: null,
       });
     }
 
     const totalDias = new Date(anioNum, mesNum, 0).getDate();
     const diasDisponibilidad = [];
 
-    const horariosAtencion = await Agenda.find({ medico: new mongoose.Types.ObjectId(medico), activo: true });
+    const horariosAtencion = await Agenda.find({
+      medico: new mongoose.Types.ObjectId(medico),
+      activo: true,
+    });
     const hoyStr = obtenerFechaHoyStr();
 
     for (let dia = 1; dia <= totalDias; dia++) {
@@ -295,7 +434,12 @@ export const getDisponibilidadMes = async (req, res) => {
       const fechaStr = `${anioNum}-${mesStr}-${diaStr}`;
 
       if (fechaStr < hoyStr) {
-        diasDisponibilidad.push({ fecha: fechaStr, diaNum: dia, tieneDisponibilidad: false, totalLibres: 0 });
+        diasDisponibilidad.push({
+          fecha: fechaStr,
+          diaNum: dia,
+          tieneDisponibilidad: false,
+          totalLibres: 0,
+        });
         continue;
       }
 
@@ -308,29 +452,53 @@ export const getDisponibilidadMes = async (req, res) => {
       const excepcionDia = await ExcepcionAgenda.findOne({
         medico,
         fecha: { $gte: inicioDia, $lte: finDia },
-        activo: true
+        activo: true,
       });
 
       let slotsTeoricos = [];
 
       if (excepcionDia) {
         if (excepcionDia.tipo === TipoExcepcion.BLOQUEO_TOTAL) {
-          diasDisponibilidad.push({ fecha: fechaStr, diaNum: dia, tieneDisponibilidad: false, totalLibres: 0 });
+          diasDisponibilidad.push({
+            fecha: fechaStr,
+            diaNum: dia,
+            tieneDisponibilidad: false,
+            totalLibres: 0,
+          });
           continue;
-        } else if (excepcionDia.tipo === TipoExcepcion.MODIFICACION_HORARIO && excepcionDia.horaInicio && excepcionDia.horaFin) {
+        } else if (
+          excepcionDia.tipo === TipoExcepcion.MODIFICACION_HORARIO &&
+          excepcionDia.horaInicio &&
+          excepcionDia.horaFin
+        ) {
           const duracion = excepcionDia.duracionTurnoMinutos || 30;
-          slotsTeoricos = generarSlots(excepcionDia.horaInicio, excepcionDia.horaFin, duracion);
+          slotsTeoricos = generarSlots(
+            excepcionDia.horaInicio,
+            excepcionDia.horaFin,
+            duracion,
+          );
         }
       } else {
-        const bloquesDia = horariosAtencion.filter(h => h.diaSemana === diaNombre);
-        bloquesDia.forEach(bloque => {
-          const slotsBloque = generarSlots(bloque.horaInicio, bloque.horaFin, bloque.duracionTurnoMinutos);
+        const bloquesDia = horariosAtencion.filter(
+          (h) => h.diaSemana === diaNombre,
+        );
+        bloquesDia.forEach((bloque) => {
+          const slotsBloque = generarSlots(
+            bloque.horaInicio,
+            bloque.horaFin,
+            bloque.duracionTurnoMinutos,
+          );
           slotsTeoricos = slotsTeoricos.concat(slotsBloque);
         });
       }
 
       if (slotsTeoricos.length === 0) {
-        diasDisponibilidad.push({ fecha: fechaStr, diaNum: dia, tieneDisponibilidad: false, totalLibres: 0 });
+        diasDisponibilidad.push({
+          fecha: fechaStr,
+          diaNum: dia,
+          tieneDisponibilidad: false,
+          totalLibres: 0,
+        });
         continue;
       }
 
@@ -338,31 +506,32 @@ export const getDisponibilidadMes = async (req, res) => {
         medico: new mongoose.Types.ObjectId(medico),
         fecha: { $gte: inicioDia, $lte: finDia },
         activo: true,
-        estado: { $ne: EstadoTurnoEnum.CANCELADO }
+        estado: { $ne: EstadoTurnoEnum.CANCELADO },
       });
 
-      const horasOcupadas = turnosOcupados.map(t => t.hora);
-      const slotsLibres = slotsTeoricos.filter(slot => !horasOcupadas.includes(slot));
+      const horasOcupadas = turnosOcupados.map((t) => t.hora);
+      const slotsLibres = slotsTeoricos.filter(
+        (slot) => !horasOcupadas.includes(slot),
+      );
 
       diasDisponibilidad.push({
         fecha: fechaStr,
         diaNum: dia,
         tieneDisponibilidad: slotsLibres.length > 0,
-        totalLibres: slotsLibres.length
+        totalLibres: slotsLibres.length,
       });
     }
 
     return res.status(200).json({
       ok: true,
       mensaje: 'Disponibilidad mensual obtenida exitosamente',
-      data: diasDisponibilidad
+      data: diasDisponibilidad,
     });
-
   } catch (error) {
     return res.status(500).json({
       ok: false,
       mensaje: 'Error al calcular la disponibilidad mensual',
-      error: error.message
+      error: error.message,
     });
   }
 };
@@ -370,30 +539,63 @@ export const getDisponibilidadMes = async (req, res) => {
 export const createTurno = async (req, res) => {
   try {
     const esUrgente = req.query.urgencia === 'true';
-    const { fecha, paciente } = req.body;
+    const usuario = req.usuario || req.user;
+    const rolUsuario = String(usuario?.rol || '').toUpperCase();
+    const datosDelTurno = { ...req.body };
+    if (rolUsuario === RolEnum.PACIENTE) {
+      const pacienteDoc = await buscarPacientePorUsuario(usuario);
+      if (!pacienteDoc) {
+        return res.status(403).json({
+          ok: false,
+          mensaje: 'No se encontró la ficha de paciente asociada a tu usuario',
+        });
+      }
+      datosDelTurno.paciente = pacienteDoc._id;
+    } else if (rolUsuario === RolEnum.MEDICO) {
+      const medicoDoc = await buscarMedicoPorUsuario(usuario);
+      if (!medicoDoc) {
+        return res.status(403).json({
+          ok: false,
+          mensaje: 'No se encontró un perfil médico asociado a tu usuario',
+        });
+      }
+      datosDelTurno.medico = medicoDoc._id;
+    }
+
+    const { fecha, paciente } = datosDelTurno;
     const observaciones = (req.body.observaciones || '').trim();
 
-    if (!fecha || !paciente) {
+    if (
+      !fecha ||
+      !paciente ||
+      !datosDelTurno.medico ||
+      !mongoose.Types.ObjectId.isValid(paciente) ||
+      !mongoose.Types.ObjectId.isValid(datosDelTurno.medico)
+    ) {
       return res.status(400).json({
         ok: false,
-        mensaje: 'La fecha y el paciente son obligatorios para registrar un turno.'
+        mensaje:
+          'La fecha, el médico y el paciente son obligatorios para registrar un turno.',
       });
     }
 
     const turnosCanceladosCount = await Turno.countDocuments({
       paciente,
       estado: EstadoTurnoEnum.CANCELADO,
-      activo: false
+      activo: false,
     });
 
     if (turnosCanceladosCount > 3) {
       const ultimoTurnoCancelado = await Turno.findOne({
         paciente,
-        estado: EstadoTurnoEnum.CANCELADO
+        estado: EstadoTurnoEnum.CANCELADO,
       }).sort({ _id: -1 });
 
       if (ultimoTurnoCancelado) {
-        const fechaCancelacion = new Date(ultimoTurnoCancelado._id.getTimestamp() || ultimoTurnoCancelado.fecha);
+        const fechaCancelacion = new Date(
+          ultimoTurnoCancelado._id.getTimestamp() ||
+            ultimoTurnoCancelado.fecha,
+        );
         const diasPenalizacion = 15;
         const fechaFinSancion = new Date(fechaCancelacion);
         fechaFinSancion.setDate(fechaFinSancion.getDate() + diasPenalizacion);
@@ -401,21 +603,23 @@ export const createTurno = async (req, res) => {
         const hoy = new Date();
 
         if (hoy < fechaFinSancion) {
-          const diasRestantes = Math.ceil((fechaFinSancion.getTime() - hoy.getTime()) / (1000 * 60 * 60 * 24));
+          const diasRestantes = Math.ceil(
+            (fechaFinSancion.getTime() - hoy.getTime()) / (1000 * 60 * 60 * 24),
+          );
           return res.status(403).json({
             ok: false,
-            mensaje: `Acción bloqueada: El paciente registra múltiples cancelaciones. No podrá solicitar nuevos turnos por ${diasRestantes} días más.`
+            mensaje: `Acción bloqueada: El paciente registra múltiples cancelaciones. No podrá solicitar nuevos turnos por ${diasRestantes} días más.`,
           });
         }
       }
     }
 
     const fechaObjTurno = new Date(fecha);
-    
+
     if (isNaN(fechaObjTurno.getTime())) {
       return res.status(400).json({
         ok: false,
-        mensaje: 'El formato de la fecha no es válido.'
+        mensaje: 'El formato de la fecha no es válido.',
       });
     }
 
@@ -423,43 +627,45 @@ export const createTurno = async (req, res) => {
     const mesT = String(fechaObjTurno.getUTCMonth() + 1).padStart(2, '0');
     const diaT = String(fechaObjTurno.getUTCDate()).padStart(2, '0');
     const fechaTurnoStr = `${anioT}-${mesT}-${diaT}`;
-      
+
     const hoyStr = obtenerFechaHoyStr();
 
     if (fechaTurnoStr < hoyStr) {
       return res.status(400).json({
         ok: false,
-        mensaje: 'No se pueden registrar turnos con fechas anteriores al día de hoy.'
+        mensaje:
+          'No se pueden registrar turnos con fechas anteriores al día de hoy.',
       });
     }
 
-    const fechaNormalizada = new Date(fechaTurnoStr + 'T00:00:00.000Z');
-    const datosDelTurno = {
-      ...req.body,
+    const fechaNormalizada = new Date(`${fechaTurnoStr}T00:00:00.000Z`);
+    const datosNormalizados = {
+      ...datosDelTurno,
       fecha: fechaNormalizada,
       estado: esUrgente ? EstadoTurnoEnum.ATENDIDO : EstadoTurnoEnum.PENDIENTE,
-      observaciones: observaciones || (esUrgente ? 'Ingreso por guardia médica' : ''),
+      observaciones:
+        observaciones || (esUrgente ? 'Ingreso por guardia médica' : ''),
     };
 
-    const nuevoTurno = await Turno.create(datosDelTurno);
+    const nuevoTurno = await Turno.create(datosNormalizados);
     return res.status(201).json({
       ok: true,
       mensaje: 'Turno creado exitosamente',
-      data: nuevoTurno
+      data: nuevoTurno,
     });
-
   } catch (error) {
     if (error.code === 11000) {
       return res.status(409).json({
         ok: false,
-        mensaje: 'El paciente ya tiene asignado un turno en la misma fecha y hora',
-        data: null
+        mensaje:
+          'El paciente ya tiene asignado un turno en la misma fecha y hora',
+        data: null,
       });
     }
     return res.status(500).json({
       ok: false,
       mensaje: 'Error interno del servidor',
-      error: error.message
+      error: error.message,
     });
   }
 };
@@ -467,21 +673,44 @@ export const createTurno = async (req, res) => {
 export const updateTurno = async (req, res) => {
   try {
     const { id } = req.params;
-    const datosActualizacion = req.body;
+    const usuario = req.usuario || req.user;
+    const rolUsuario = String(usuario?.rol || '').toUpperCase();
+    const alcance = await obtenerFiltroPorUsuario(usuario);
+    if (!alcance) {
+      return res.status(403).json({
+        ok: false,
+        mensaje: 'No se encontró un perfil asociado a tu usuario',
+      });
+    }
 
-    const turnoExistente = await Turno.findById(id);
+    const turnoExistente = await Turno.findOne({ _id: id, ...alcance });
 
     if (!turnoExistente) {
-      return res.status(404).json({
+      return res.status(Object.keys(alcance).length ? 403 : 404).json({
         ok: false,
-        mensaje: `Turno no encontrado con ID ${id}`
+        mensaje: Object.keys(alcance).length
+          ? 'No tenés permiso para modificar este turno'
+          : `Turno no encontrado con ID ${id}`,
       });
+    }
+
+    const datosActualizacion = { ...req.body };
+    if (rolUsuario === RolEnum.MEDICO || rolUsuario === RolEnum.PACIENTE) {
+      if (Object.keys(datosActualizacion).some((key) => key.startsWith('$'))) {
+        return res.status(400).json({
+          ok: false,
+          mensaje: 'No se permiten operadores de actualización en la solicitud',
+        });
+      }
+      delete datosActualizacion.paciente;
+      delete datosActualizacion.medico;
     }
 
     if (turnoExistente.estado === EstadoTurnoEnum.ATENDIDO) {
       return res.status(400).json({
         ok: false,
-        mensaje: 'No se puede modificar este turno porque ya se encuentra en estado ATENDIDO.'
+        mensaje:
+          'No se puede modificar este turno porque ya se encuentra en estado ATENDIDO.',
       });
     }
 
@@ -490,14 +719,14 @@ export const updateTurno = async (req, res) => {
       select: 'nombre apellido obraSocial',
       populate: {
         path: 'obraSocial',
-        select: 'razonSocial'
-      }
+        select: 'razonSocial',
+      },
     };
 
-    const turnoActualizado = await Turno.findByIdAndUpdate(
-      id,
+    const turnoActualizado = await Turno.findOneAndUpdate(
+      { _id: id, ...alcance },
       datosActualizacion,
-      { new: true, runValidators: true }
+      { new: true, runValidators: true },
     )
       .populate(pacientePopulate)
       .populate('medico', 'nombre apellido');
@@ -505,31 +734,31 @@ export const updateTurno = async (req, res) => {
     return res.status(200).json({
       ok: true,
       mensaje: 'Turno actualizado exitosamente',
-      data: turnoActualizado
+      data: turnoActualizado,
     });
-    
   } catch (error) {
     if (error.code === 11000) {
       return res.status(409).json({
         ok: false,
-        mensaje: 'El médico ya tiene asignado un turno en la misma fecha y hora',
-        data: null
+        mensaje:
+          'El médico ya tiene asignado un turno en la misma fecha y hora',
+        data: null,
       });
     }
 
     if (error.name === 'ValidationError') {
-      const errores = Object.values(error.errors).map(err => err.message);
+      const errores = Object.values(error.errors).map((err) => err.message);
       return res.status(400).json({
         ok: false,
         mensaje: 'Error de validación',
-        error: errores
+        error: errores,
       });
     }
 
     return res.status(500).json({
       ok: false,
       mensaje: 'Error interno del servidor',
-      error: error.message
+      error: error.message,
     });
   }
 };
@@ -537,31 +766,41 @@ export const updateTurno = async (req, res) => {
 export const deleteTurno = async (req, res) => {
   try {
     const { id } = req.params;
+    const usuario = req.usuario || req.user;
+    const alcance = await obtenerFiltroPorUsuario(usuario);
+    if (!alcance) {
+      return res.status(403).json({
+        ok: false,
+        mensaje: 'No se encontró un perfil asociado a tu usuario',
+      });
+    }
 
-    const turnoBorrado = await Turno.findByIdAndUpdate(
-      id,
+    const turnoBorrado = await Turno.findOneAndUpdate(
+      { _id: id, ...alcance },
       { activo: false, estado: EstadoTurnoEnum.CANCELADO },
-      { new: true }
+      { new: true },
     );
 
     if (!turnoBorrado) {
-      return res.status(404).json({
+      return res.status(Object.keys(alcance).length ? 403 : 404).json({
         ok: false,
-        mensaje: `Turno no encontrado con ID ${id}`
+        mensaje: Object.keys(alcance).length
+          ? 'No tenés permiso para eliminar este turno'
+          : `Turno no encontrado con ID ${id}`,
       });
     }
 
     return res.status(200).json({
       ok: true,
       mensaje: 'Turno eliminado exitosamente',
-      data: turnoBorrado
+      data: turnoBorrado,
     });
   } catch (error) {
     console.error('Error al eliminar el turno:', error);
     return res.status(400).json({
       ok: false,
       mensaje: 'ID con formato inválido',
-      error: error.message
+      error: error.message,
     });
   }
 };
@@ -569,19 +808,30 @@ export const deleteTurno = async (req, res) => {
 export const marcarAtendido = async (req, res) => {
   try {
     const { id } = req.params;
-    const turno = await Turno.findById(id);
+    const usuario = req.usuario || req.user;
+    const alcance = await obtenerFiltroPorUsuario(usuario);
+    if (!alcance) {
+      return res.status(403).json({
+        ok: false,
+        mensaje: 'No se encontró un perfil asociado a tu usuario',
+      });
+    }
+    const turno = await Turno.findOne({ _id: id, ...alcance });
 
     if (!turno) {
-      return res.status(404).json({
+      return res.status(Object.keys(alcance).length ? 403 : 404).json({
         ok: false,
-        mensaje: `Turno no encontrado con ID ${id}`
+        mensaje: Object.keys(alcance).length
+          ? 'No tenés permiso para atender este turno'
+          : `Turno no encontrado con ID ${id}`,
       });
     }
 
     if (turno.estado === EstadoTurnoEnum.ATENDIDO) {
       return res.status(400).json({
         ok: false,
-        mensaje: 'Este turno ya se encuentra marcado como atendido y no puede modificarse.'
+        mensaje:
+          'Este turno ya se encuentra marcado como atendido y no puede modificarse.',
       });
     }
 
@@ -597,7 +847,8 @@ export const marcarAtendido = async (req, res) => {
     if (fechaTurnoStr !== hoyStr) {
       return res.status(400).json({
         ok: false,
-        mensaje: 'Acción no permitida: Solo se pueden atender turnos programados para el día de la fecha.'
+        mensaje:
+          'Acción no permitida: Solo se pueden atender turnos programados para el día de la fecha.',
       });
     }
 
@@ -607,14 +858,13 @@ export const marcarAtendido = async (req, res) => {
     return res.status(200).json({
       ok: true,
       mensaje: 'Turno marcado como atendido exitosamente',
-      data: turno
+      data: turno,
     });
-    
   } catch (error) {
     return res.status(500).json({
       ok: false,
       mensaje: 'Error de servidor',
-      error: error.message
+      error: error.message,
     });
   }
 };
@@ -629,16 +879,26 @@ export const getTurnosPendientesHistoricos = async (req, res) => {
       select: 'nombre apellido obraSocial dni telefono',
       populate: {
         path: 'obraSocial',
-        select: 'razonSocial'
-      }
+        select: 'razonSocial',
+      },
     };
 
+    const alcance = await obtenerFiltroPorUsuario(req.usuario || req.user);
+    if (!alcance) {
+      return res.status(200).json({
+        ok: true,
+        mensaje: 'No se encontró un perfil asociado a tu usuario',
+        data: [],
+      });
+    }
+
     const turnosHistoricos = await Turno.find({
+      ...alcance,
       fecha: { $lte: finHoy },
       activo: true,
-      estado: { 
-        $nin: [EstadoTurnoEnum.ATENDIDO, EstadoTurnoEnum.CANCELADO] 
-      }
+      estado: {
+        $nin: [EstadoTurnoEnum.ATENDIDO, EstadoTurnoEnum.CANCELADO],
+      },
     })
       .populate(pacientePopulate)
       .populate('medico', 'nombre apellido')
@@ -647,13 +907,13 @@ export const getTurnosPendientesHistoricos = async (req, res) => {
     return res.status(200).json({
       ok: true,
       mensaje: 'Turnos pendientes históricos obtenidos exitosamente',
-      data: turnosHistoricos
+      data: turnosHistoricos,
     });
   } catch (error) {
     return res.status(500).json({
       ok: false,
       mensaje: 'Error al obtener los turnos pendientes históricos',
-      error: error.message
+      error: error.message,
     });
   }
 };
@@ -661,27 +921,37 @@ export const getTurnosPendientesHistoricos = async (req, res) => {
 export const cancelarTurno = async (req, res) => {
   try {
     const { id } = req.params;
+    const usuario = req.usuario || req.user;
+    const alcance = await obtenerFiltroPorUsuario(usuario);
+    if (!alcance) {
+      return res.status(403).json({
+        ok: false,
+        mensaje: 'No se encontró un perfil asociado a tu usuario',
+      });
+    }
 
-    const turno = await Turno.findById(id);
+    const turno = await Turno.findOne({ _id: id, ...alcance });
 
     if (!turno) {
-      return res.status(404).json({
+      return res.status(Object.keys(alcance).length ? 403 : 404).json({
         ok: false,
-        mensaje: `Turno no encontrado con ID ${id}`
+        mensaje: Object.keys(alcance).length
+          ? 'No tenés permiso para cancelar este turno'
+          : `Turno no encontrado con ID ${id}`,
       });
     }
 
     if (turno.estado === EstadoTurnoEnum.ATENDIDO) {
       return res.status(400).json({
         ok: false,
-        mensaje: 'No se puede cancelar un turno que ya ha sido atendido.'
+        mensaje: 'No se puede cancelar un turno que ya ha sido atendido.',
       });
     }
 
     if (turno.estado === EstadoTurnoEnum.CANCELADO) {
       return res.status(400).json({
         ok: false,
-        mensaje: 'Este turno ya se encuentra cancelado.'
+        mensaje: 'Este turno ya se encuentra cancelado.',
       });
     }
 
@@ -692,39 +962,29 @@ export const cancelarTurno = async (req, res) => {
     return res.status(200).json({
       ok: true,
       mensaje: 'Turno cancelado exitosamente',
-      data: turno
+      data: turno,
     });
-
   } catch (error) {
     return res.status(500).json({
       ok: false,
       mensaje: 'Error al cancelar el turno',
-      error: error.message
+      error: error.message,
     });
   }
 };
 
 export const getMisTurnos = async (req, res) => {
   try {
-    const usuario = req.usuario;
-
-    if (!usuario?.email) {
-      return res.status(401).json({
-        ok: false,
-        mensaje: 'No autorizado'
-      });
-    }
-
-    const paciente = await Paciente.findOne({ email: usuario.email.toLowerCase() });
-
-    if (!paciente) {
+    const usuario = req.usuario || req.user;
+    const alcance = await obtenerFiltroPorUsuario(usuario);
+    if (!alcance) {
       return res.status(404).json({
         ok: false,
-        mensaje: 'No se encontró la ficha de paciente asociada a tu usuario'
+        mensaje: 'No se encontró un perfil asociado a tu usuario',
       });
     }
 
-    const filtro = { paciente: paciente._id, activo: true };
+    const filtro = { ...alcance, activo: true };
 
     if (req.query.historial !== 'true') {
       const limite = new Date();
@@ -740,54 +1000,49 @@ export const getMisTurnos = async (req, res) => {
     return res.status(200).json({
       ok: true,
       mensaje: 'Turnos obtenidos exitosamente',
-      data: turnos
+      data: turnos,
     });
   } catch (error) {
     return res.status(500).json({
       ok: false,
       mensaje: 'Error al obtener los turnos',
-      error: error.message
+      error: error.message,
     });
   }
 };
 
 export const getMiTurnoById = async (req, res) => {
   try {
-    const usuario = req.usuario;
-
-    if (!usuario?.email) {
-      return res.status(401).json({
-        ok: false,
-        mensaje: 'No autorizado'
-      });
-    }
-
-    const paciente = await Paciente.findOne({ email: usuario.email.toLowerCase() });
-
-    if (!paciente) {
+    const usuario = req.usuario || req.user;
+    const alcance = await obtenerFiltroPorUsuario(usuario);
+    if (!alcance) {
       return res.status(404).json({
         ok: false,
-        mensaje: 'No se encontró la ficha de paciente asociada a tu usuario'
+        mensaje: 'No se encontró un perfil asociado a tu usuario',
       });
     }
 
-    const turno = await Turno.findOne({ _id: req.params.id, paciente: paciente._id })
+    const turno = await Turno.findOne({ _id: req.params.id, ...alcance })
+      .populate('paciente', 'nombre apellido')
       .populate('medico', 'nombre apellido');
 
     if (!turno) {
       return res.status(404).json({
         ok: false,
-        mensaje: 'Turno no encontrado'
+        mensaje: 'Turno no encontrado',
       });
     }
 
     const consulta = await ConsultaMedica.findOne({
       turno: turno._id,
-      paciente: paciente._id,
+      paciente: turno.paciente?._id || turno.paciente,
+      ...('medico' in alcance ? { medico: alcance.medico } : {}),
       activo: true,
     })
       .populate('medico', 'nombre apellido')
-      .select('motivo diagnostico tratamiento observaciones estado fecha medico');
+      .select(
+        'motivo diagnostico tratamiento observaciones estado fecha medico',
+      );
 
     return res.status(200).json({
       ok: true,
@@ -795,13 +1050,13 @@ export const getMiTurnoById = async (req, res) => {
       data: {
         turno,
         consulta: consulta || null,
-      }
+      },
     });
   } catch (error) {
     return res.status(400).json({
       ok: false,
       mensaje: 'Error al obtener el turno',
-      error: error.message
+      error: error.message,
     });
   }
 };

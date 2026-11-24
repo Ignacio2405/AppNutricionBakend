@@ -5,6 +5,8 @@ import "../models/Paciente.js";
 
 const esObjectIdValido = (id) => mongoose.Types.ObjectId.isValid(id);
 
+const normalizarArray = (valor) => (Array.isArray(valor) ? valor : []);
+
 // GET /api/planes-comidas
 export const getPlanesComidas = async (req, res) => {
   try {
@@ -100,12 +102,16 @@ export const createPlanComidas = async (req, res) => {
       consultationId,
       consulta,
       titulo,
+      tipoPlan,
       fechaEntrega,
       fechaInicioVigencia,
       fechaFinRevision,
       planActivo = true,
       objetivosMacros,
       grupoDeAlimentos,
+      distribucionEquivalencias,
+      recetasEjemplos,
+      recomendacionesGenerales,
       advertencias,
     } = req.body;
 
@@ -137,12 +143,16 @@ export const createPlanComidas = async (req, res) => {
       patientId: idPaciente,
       consultationId: idConsulta || null,
       titulo,
+      tipoPlan: tipoPlan || "",
       fechaEntrega: fechaEntrega || new Date(),
       fechaInicioVigencia,
       fechaFinRevision: fechaFinRevision || null,
       planActivo: Boolean(planActivo),
       objetivosMacros: objetivosMacros || {},
-      grupoDeAlimentos: Array.isArray(grupoDeAlimentos) ? grupoDeAlimentos : [],
+      grupoDeAlimentos: normalizarArray(grupoDeAlimentos),
+      distribucionEquivalencias: normalizarArray(distribucionEquivalencias),
+      recetasEjemplos: normalizarArray(recetasEjemplos),
+      recomendacionesGenerales: normalizarArray(recomendacionesGenerales),
       ...(Array.isArray(advertencias) && advertencias.length > 0
         ? { advertencias }
         : {}),
@@ -203,12 +213,16 @@ export const updatePlanComidas = async (req, res) => {
       consultationId,
       consulta,
       titulo,
+      tipoPlan,
       fechaEntrega,
       fechaInicioVigencia,
       fechaFinRevision,
       planActivo,
       objetivosMacros,
       grupoDeAlimentos,
+      distribucionEquivalencias,
+      recetasEjemplos,
+      recomendacionesGenerales,
       advertencias,
     } = req.body;
 
@@ -249,6 +263,7 @@ export const updatePlanComidas = async (req, res) => {
       planExistente.consultationId = idConsulta || null;
     }
     if (titulo !== undefined) planExistente.titulo = titulo;
+    if (tipoPlan !== undefined) planExistente.tipoPlan = tipoPlan;
     if (fechaEntrega !== undefined) planExistente.fechaEntrega = fechaEntrega;
     if (fechaInicioVigencia !== undefined) {
       planExistente.fechaInicioVigencia = fechaInicioVigencia;
@@ -266,14 +281,23 @@ export const updatePlanComidas = async (req, res) => {
       };
     }
     if (grupoDeAlimentos !== undefined) {
-      planExistente.grupoDeAlimentos = Array.isArray(grupoDeAlimentos)
-        ? grupoDeAlimentos
-        : [];
+      planExistente.grupoDeAlimentos = normalizarArray(grupoDeAlimentos);
+    }
+    if (distribucionEquivalencias !== undefined) {
+      planExistente.distribucionEquivalencias = normalizarArray(
+        distribucionEquivalencias
+      );
+    }
+    if (recetasEjemplos !== undefined) {
+      planExistente.recetasEjemplos = normalizarArray(recetasEjemplos);
+    }
+    if (recomendacionesGenerales !== undefined) {
+      planExistente.recomendacionesGenerales = normalizarArray(
+        recomendacionesGenerales
+      );
     }
     if (advertencias !== undefined) {
-      planExistente.advertencias = Array.isArray(advertencias)
-        ? advertencias
-        : [];
+      planExistente.advertencias = normalizarArray(advertencias);
     }
 
     await planExistente.save();

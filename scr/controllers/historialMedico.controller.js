@@ -1,18 +1,86 @@
+import mongoose from 'mongoose';
 import { HistorialMedico } from '../models/historialMedico.model.js';
+import { Paciente } from '../models/Paciente.js';
+import { Medico } from '../models/Medico.js';
+import { ConsultaMedica } from '../models/Consulta.js';
+import { RolEnum } from '../enum/Rol.enum.js';
+
+const buscarPacientePorUsuario = async (usuario) => {
+  if (!usuario) return null;
+  const usuarioId = usuario.id || usuario._id;
+  const emailNormalizado = String(usuario.email || '').toLowerCase().trim();
+
+  if (usuarioId && mongoose.Types.ObjectId.isValid(usuarioId)) {
+    return Paciente.findOne({
+      usuario: new mongoose.Types.ObjectId(usuarioId),
+    }).lean();
+  }
+  return emailNormalizado
+    ? Paciente.findOne({ email: emailNormalizado }).lean()
+    : null;
+};
+
+const buscarMedicoPorUsuario = async (usuario) => {
+  if (!usuario) return null;
+  const usuarioId = usuario.id || usuario._id;
+  const emailNormalizado = String(usuario.email || '').toLowerCase().trim();
+
+  const filtroActivo = {
+    $or: [{ activo: true }, { activo: { $exists: false } }],
+  };
+  if (usuarioId && mongoose.Types.ObjectId.isValid(usuarioId)) {
+    const medicoVinculado = await Medico.findOne({
+      usuario: new mongoose.Types.ObjectId(usuarioId),
+      ...filtroActivo,
+    }).lean();
+    if (medicoVinculado) return medicoVinculado;
+  }
+  return emailNormalizado
+    ? Medico.findOne({ email: emailNormalizado, ...filtroActivo }).lean()
+    : null;
+};
+
+const medicoPuedeAccederAlPaciente = async (medicoId, pacienteId) =>
+  ConsultaMedica.exists({
+    medico: medicoId,
+    paciente: pacienteId,
+    activo: true,
+  });
 
 // 1. Crear un nuevo historial médico
 export const crearHistorialMedico = async (req, res) => {
   try {
     const { pacienteId } = req.body;
+    const usuario = req.usuario || req.user;
+    const rolUsuario = String(usuario?.rol || '').toUpperCase();
 
-    // Verificamos si el paciente ya tiene un historial registrado (debido a unique: true)
+    if (!mongoose.Types.ObjectId.isValid(pacienteId)) {
+      return res.status(400).json({
+        ok: false,
+        mensaje: 'El ID del paciente no es válido',
+      });
+    }
+
+    if (rolUsuario === RolEnum.MEDICO) {
+      const medicoDoc = await buscarMedicoPorUsuario(usuario);
+      if (
+        !medicoDoc ||
+        !(await medicoPuedeAccederAlPaciente(medicoDoc._id, pacienteId))
+      ) {
+        return res.status(403).json({
+          ok: false,
+          mensaje: 'No tenés permiso para crear un historial para este paciente',
+        });
+      }
+    }
+
     const historialExistente = await HistorialMedico.findOne({ pacienteId });
     if (historialExistente) {
       return res.status(400).json({
         ok: false,
         mensaje: historialExistente.activo
           ? 'El paciente ya posee un historial médico activo.'
-          : 'El paciente ya posee un historial médico desactivado. Puede reactivarlo o actualizarlo.'
+          : 'El paciente ya posee un historial médico desactivado. Puede reactivarlo o actualizarlo.',
       });
     }
 
@@ -22,33 +90,62 @@ export const crearHistorialMedico = async (req, res) => {
     return res.status(201).json({
       ok: true,
       mensaje: 'Historial médico creado correctamente',
-      data: nuevoHistorial
+      data: nuevoHistorial,
     });
   } catch (error) {
     return res.status(400).json({
       ok: false,
       mensaje: 'Error al crear el historial médico',
-      error: error.message
+      error: error.message,
     });
   }
 };
 
-// 2. Obtener todos los historiales médicos activos
+// 2. Obtener historiales médicos activos filtrados por rol
 export const obtenerHistorialesMedicos = async (req, res) => {
   try {
-    const historiales = await HistorialMedico.find({ activo: true })
+    const usuario = req.usuario || req.user;
+    const rolUsuario = String(usuario?.rol || '').toUpperCase();
+    const filtro = { activo: true };
+
+    if (rolUsuario === RolEnum.PACIENTE) {
+      const pacienteDoc = await buscarPacientePorUsuario(usuario);
+      if (!pacienteDoc) {
+        return res.status(200).json({
+          ok: true,
+          data: [],
+        });
+      }
+      filtro.pacienteId = pacienteDoc._id;
+    } else if (rolUsuario === RolEnum.MEDICO) {
+      const medicoDoc = await buscarMedicoPorUsuario(usuario);
+      if (!medicoDoc) {
+        return res.status(200).json({
+          ok: true,
+          data: [],
+        });
+      }
+
+      const pacientesIds = await ConsultaMedica.distinct('paciente', {
+        medico: medicoDoc._id,
+        activo: true,
+      });
+      filtro.pacienteId = { $in: pacientesIds };
+    }
+
+    const historiales = await HistorialMedico.find(filtro)
       .populate('pacienteId', 'nombre apellido dni email')
       .sort({ createdAt: -1 });
 
     return res.status(200).json({
       ok: true,
-      data: historiales
+      data: historiales,
     });
   } catch (error) {
     return res.status(500).json({
       ok: false,
       mensaje: 'Error al obtener los historiales médicos',
-      error: error.message
+      error: error.message,
     });
   }
 };
@@ -63,46 +160,98 @@ export const obtenerHistorialMedicoPorId = async (req, res) => {
     if (!historial) {
       return res.status(404).json({
         ok: false,
-        mensaje: 'Historial médico no encontrado'
+        mensaje: 'Historial médico no encontrado',
       });
+    }
+
+    const usuario = req.usuario || req.user;
+    const rolUsuario = String(usuario?.rol || '').toUpperCase();
+
+    if (rolUsuario === RolEnum.PACIENTE) {
+      const pacienteDoc = await buscarPacientePorUsuario(usuario);
+      const histPacienteId = String(
+        historial.pacienteId?._id || historial.pacienteId || '',
+      );
+      if (!pacienteDoc || histPacienteId !== String(pacienteDoc._id)) {
+        return res.status(403).json({
+          ok: false,
+          mensaje: 'No tenés permiso para ver este historial médico',
+        });
+      }
+    } else if (rolUsuario === RolEnum.MEDICO) {
+      const medicoDoc = await buscarMedicoPorUsuario(usuario);
+      const pacienteId = historial.pacienteId?._id || historial.pacienteId;
+      if (
+        !medicoDoc ||
+        !(await medicoPuedeAccederAlPaciente(medicoDoc._id, pacienteId))
+      ) {
+        return res.status(403).json({
+          ok: false,
+          mensaje: 'No tenés permiso para ver este historial médico',
+        });
+      }
     }
 
     return res.status(200).json({
       ok: true,
-      data: historial
+      data: historial,
     });
   } catch (error) {
     return res.status(500).json({
       ok: false,
       mensaje: 'Error al obtener el historial médico',
-      error: error.message
+      error: error.message,
     });
   }
 };
 
-// 4. Obtener el historial médico directamente por el ID del Paciente (muy útil para el perfil clínico)
+// 4. Obtener el historial médico directamente por el ID del Paciente
 export const obtenerHistorialPorPaciente = async (req, res) => {
   try {
     const { pacienteId } = req.params;
+    const usuario = req.usuario || req.user;
+    const rolUsuario = String(usuario?.rol || '').toUpperCase();
+
+    if (rolUsuario === RolEnum.PACIENTE) {
+      const pacienteDoc = await buscarPacientePorUsuario(usuario);
+      if (!pacienteDoc || String(pacienteDoc._id) !== String(pacienteId)) {
+        return res.status(403).json({
+          ok: false,
+          mensaje: 'No tenés permiso para consultar el historial de otro paciente',
+        });
+      }
+    } else if (rolUsuario === RolEnum.MEDICO) {
+      const medicoDoc = await buscarMedicoPorUsuario(usuario);
+      if (
+        !medicoDoc ||
+        !(await medicoPuedeAccederAlPaciente(medicoDoc._id, pacienteId))
+      ) {
+        return res.status(403).json({
+          ok: false,
+          mensaje: 'No tenés permiso para consultar este historial médico',
+        });
+      }
+    }
+
     const historial = await HistorialMedico.findOne({ pacienteId, activo: true })
       .populate('pacienteId', 'nombre apellido dni email fechaNacimiento sexo');
 
     if (!historial) {
       return res.status(404).json({
         ok: false,
-        mensaje: 'El paciente aún no tiene un historial médico cargado'
+        mensaje: 'El paciente aún no tiene un historial médico cargado',
       });
     }
 
     return res.status(200).json({
       ok: true,
-      data: historial
+      data: historial,
     });
   } catch (error) {
     return res.status(500).json({
       ok: false,
       mensaje: 'Error al buscar el historial médico del paciente',
-      error: error.message
+      error: error.message,
     });
   }
 };
@@ -111,32 +260,59 @@ export const obtenerHistorialPorPaciente = async (req, res) => {
 export const actualizarHistorialMedico = async (req, res) => {
   try {
     const { id } = req.params;
-    // Evitamos que se modifique accidentalmente el pacienteId o el estado activo por esta vía
     const { pacienteId, activo, ...datosActualizados } = req.body;
+    const usuario = req.usuario || req.user;
+    const rolUsuario = String(usuario?.rol || '').toUpperCase();
+    const filtro = { _id: id, activo: true };
+
+    if (rolUsuario === RolEnum.MEDICO) {
+      if (Object.keys(datosActualizados).some((key) => key.startsWith('$'))) {
+        return res.status(400).json({
+          ok: false,
+          mensaje: 'No se permiten operadores de actualización en la solicitud',
+        });
+      }
+      const medicoDoc = await buscarMedicoPorUsuario(usuario);
+      const historialActual = await HistorialMedico.findOne(filtro).lean();
+      if (
+        !medicoDoc ||
+        !historialActual ||
+        !(await medicoPuedeAccederAlPaciente(
+          medicoDoc._id,
+          historialActual.pacienteId,
+        ))
+      ) {
+        return res.status(403).json({
+          ok: false,
+          mensaje: 'No tenés permiso para actualizar este historial médico',
+        });
+      }
+      filtro.pacienteId = historialActual.pacienteId;
+    }
 
     const historialActualizado = await HistorialMedico.findOneAndUpdate(
-      { _id: id, activo: true },
+      filtro,
       datosActualizados,
-      { new: true, runValidators: true }
+      { new: true, runValidators: true },
     ).populate('pacienteId', 'nombre apellido dni');
 
     if (!historialActualizado) {
       return res.status(404).json({
         ok: false,
-        mensaje: 'Historial médico no encontrado o inactivo'
+        mensaje: 'Historial médico no encontrado o inactivo',
       });
     }
 
     return res.status(200).json({
       ok: true,
       mensaje: 'Historial médico actualizado correctamente',
-      data: historialActualizado
+      data: historialActualizado,
     });
   } catch (error) {
     return res.status(400).json({
       ok: false,
       mensaje: 'Error al actualizar el historial médico',
-      error: error.message
+      error: error.message,
     });
   }
 };
@@ -145,29 +321,51 @@ export const actualizarHistorialMedico = async (req, res) => {
 export const eliminarHistorialMedico = async (req, res) => {
   try {
     const { id } = req.params;
+    const usuario = req.usuario || req.user;
+    const rolUsuario = String(usuario?.rol || '').toUpperCase();
+    const filtro = { _id: id, activo: true };
+
+    if (rolUsuario === RolEnum.MEDICO) {
+      const medicoDoc = await buscarMedicoPorUsuario(usuario);
+      const historialActual = await HistorialMedico.findOne(filtro).lean();
+      if (
+        !medicoDoc ||
+        !historialActual ||
+        !(await medicoPuedeAccederAlPaciente(
+          medicoDoc._id,
+          historialActual.pacienteId,
+        ))
+      ) {
+        return res.status(403).json({
+          ok: false,
+          mensaje: 'No tenés permiso para eliminar este historial médico',
+        });
+      }
+      filtro.pacienteId = historialActual.pacienteId;
+    }
 
     const historialDesactivado = await HistorialMedico.findOneAndUpdate(
-      { _id: id, activo: true },
+      filtro,
       { activo: false },
-      { new: true }
+      { new: true },
     );
 
     if (!historialDesactivado) {
       return res.status(404).json({
         ok: false,
-        mensaje: 'Historial médico no encontrado o ya fue desactivado'
+        mensaje: 'Historial médico no encontrado o ya fue desactivado',
       });
     }
 
     return res.status(200).json({
       ok: true,
-      mensaje: 'Historial médico desactivado correctamente'
+      mensaje: 'Historial médico desactivado correctamente',
     });
   } catch (error) {
     return res.status(500).json({
       ok: false,
       mensaje: 'Error al eliminar el historial médico',
-      error: error.message
+      error: error.message,
     });
   }
 };

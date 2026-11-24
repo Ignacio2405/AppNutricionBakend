@@ -44,13 +44,17 @@ const ExcepcionAgendaSchema = new mongoose.Schema(
 
 ExcepcionAgendaSchema.pre('save', function () {
   if (this.fecha) {
-    this.fecha.setHours(0, 0, 0, 0);
+    const d = new Date(this.fecha);
+    if (!Number.isNaN(d.getTime())) {
+      d.setUTCHours(0, 0, 0, 0);
+      this.fecha = d;
+    }
   }
 });
 
 // Índice compuesto único para excepciones activas por médico y fecha
 ExcepcionAgendaSchema.index(
-  { medico: 1, fecha: 1 }, 
+  { medico: 1, fecha: 1 },
   { unique: true, partialFilterExpression: { activo: true } }
 );
 

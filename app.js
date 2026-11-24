@@ -19,9 +19,14 @@ import habitoAlimentario from './scr/routes/habitosAlimentarios.routes.js';
 import resultadosLaboratorioRoutes from "./scr/routes/resultadosLaboratorio.routes.js";
 import planComidasRoutes from "./scr/routes/planComidas.routes.js";
 import  MetaObjetivo from './scr/routes/metaObjetivo.routes.js';
-
+import reportesRoutes from './scr/routes/reportes.routes.js';
+import pagoRoutes from './scr/routes/pago.routes.js';
 const app = express();
+
 const PORT = process.env.PORT || 3000;
+app.listen(PORT, "0.0.0.0", () => {
+  console.log(`Servidor corriendo en puerto ${PORT}`);
+});
 
 // Middlewares de seguridad y utilidad
 app.use(helmet());
@@ -60,7 +65,8 @@ app.use('/api/habitos', habitoAlimentario);
 app.use("/api/resultados-laboratorio", resultadosLaboratorioRoutes);
 app.use("/api/planes-comidas", planComidasRoutes);
 app.use('/api/metas-objetivos', MetaObjetivo);
-
+app.use("/api/reportes", reportesRoutes);
+app.use('/api/pagos', pagoRoutes );
 
 const iniciarServidor = async () => {
     try {

@@ -24,6 +24,11 @@ const medicoSchema = new mongoose.Schema({
         unique: true, 
         lowercase: true 
     },
+    usuario: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Usuario',
+        immutable: true,
+    },
     telefono: {
         tipo: {
             type: String,

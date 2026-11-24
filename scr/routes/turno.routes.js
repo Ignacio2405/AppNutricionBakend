@@ -23,14 +23,14 @@ const router = Router();
 router.get('/pendientes-historicos', verificarToken, validarRol(RolEnum.ADMIN, RolEnum.MEDICO, RolEnum.PACIENTE, RolEnum.RECEPCIONISTA, RolEnum.USER), getTurnosPendientesHistoricos);
 router.get('/turnos-disponibles', verificarToken,  validarRol(RolEnum.ADMIN, RolEnum.MEDICO, RolEnum.PACIENTE, RolEnum.RECEPCIONISTA, RolEnum.USER),getTurnosDisponibles);
 router.get('/turnos-disponibles-mes', verificarToken,  validarRol(RolEnum.ADMIN, RolEnum.MEDICO, RolEnum.PACIENTE, RolEnum.RECEPCIONISTA, RolEnum.USER),getDisponibilidadMes);
-router.get('/mis-turnos', verificarToken, validarRol(RolEnum.ADMIN, RolEnum.MEDICO, RolEnum.PACIENTE, RolEnum.RECEPCIONISTA, RolEnum.USER), getMisTurnos); // (Asegúrate de importar getMisTurnos si lo usas)
+router.get('/mis-turnos', verificarToken, validarRol(RolEnum.MEDICO, RolEnum.PACIENTE), getMisTurnos);
 
 // 2. RUTAS CRUD BÁSICAS
 router.post('/', verificarToken, validarRol(RolEnum.ADMIN, RolEnum.MEDICO, RolEnum.PACIENTE, RolEnum.RECEPCIONISTA, RolEnum.USER), createTurno);
 router.get('/', verificarToken, validarRol(RolEnum.ADMIN, RolEnum.MEDICO, RolEnum.PACIENTE, RolEnum.RECEPCIONISTA, RolEnum.USER), getTurnos);
 
 // 3. RUTAS CON PARÁMETROS DINÁMICOS (Siempre al final)
-router.get('/mis-turnos/:id', verificarToken, getMiTurnoById);
+router.get('/mis-turnos/:id', verificarToken, validarRol(RolEnum.MEDICO, RolEnum.PACIENTE), getMiTurnoById);
 router.get('/:id', verificarToken, getTurnoById);
 router.put('/:id', verificarToken, updateTurno);
 router.patch('/:id/cancelar', verificarToken,  validarRol(RolEnum.ADMIN, RolEnum.MEDICO, RolEnum.RECEPCIONISTA),cancelarTurno);

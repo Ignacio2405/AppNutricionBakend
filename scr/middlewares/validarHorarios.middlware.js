@@ -1,17 +1,35 @@
 import { Agenda } from '../models/Agenda.js';
 
 const horaAMinutos = (hora) => {
+  if (typeof hora !== 'string' || !hora.includes(':')) return NaN;
   const [horas = 0, minutos = 0] = hora.split(':').map(Number);
+  if (Number.isNaN(horas) || Number.isNaN(minutos)) return NaN;
   return horas * 60 + minutos;
 };
 
 export const validarHorario = async (req, res, next) => {
   try {
-    const { medico, diaSemana, horaInicio, horaFin, duracionTurnoMinutos} = req.body;
+    const { medico, diaSemana, horaInicio, horaFin, duracionTurnoMinutos } = req.body;
     const { id } = req.params;
+
+    if (!horaInicio || !horaFin) {
+      return res.status(400).json({
+        ok: false,
+        mensaje: 'La hora de inicio y la hora de fin son obligatorias',
+        data: null
+      });
+    }
 
     const inicioNuevo = horaAMinutos(horaInicio);
     const finNuevo = horaAMinutos(horaFin);
+
+    if (Number.isNaN(inicioNuevo) || Number.isNaN(finNuevo)) {
+      return res.status(400).json({
+        ok: false,
+        mensaje: 'El formato de horaInicio o horaFin no es válido (use HH:MM)',
+        data: null
+      });
+    }
 
     if (finNuevo <= inicioNuevo) {
       return res.status(400).json({
@@ -21,36 +39,41 @@ export const validarHorario = async (req, res, next) => {
       });
     }
 
-    // Regla 2: Validar que la duración total sea múltiplo exacto de los turnos (ej: 30 min)
-    const duracionTotalMinutos = finNuevo - inicioNuevo;
-    if (duracionTotalMinutos % duracionTurnoMinutos !== 0) {
+    const duracion = Number(duracionTurnoMinutos);
+    if (!Number.isFinite(duracion) || duracion <= 0) {
       return res.status(400).json({
         ok: false,
-        mensaje: `El rango horario debe ser múltiplo de la duración del turno (${duracionTurnoMinutos} minutos)`,
+        mensaje: 'La duración del turno debe ser un número mayor a 0',
         data: null
       });
     }
-  
-    // Regla 3: Construir el filtro para MongoDB
+
+    const duracionTotalMinutos = finNuevo - inicioNuevo;
+    if (duracionTotalMinutos % duracion !== 0) {
+      return res.status(400).json({
+        ok: false,
+        mensaje: `El rango horario debe ser múltiplo de la duración del turno (${duracion} minutos)`,
+        data: null
+      });
+    }
+
     const filtroQuery = {
       medico,
       diaSemana,
       activo: true,
     };
 
-    // SI VIENE UN ID (PUT/PATCH), EXCLUIMOS ESTE REGISTRO DE LA BÚSQUEDA
     if (id) {
       filtroQuery._id = { $ne: id };
     }
 
     const horariosExistentes = await Agenda.find(filtroQuery);
-    
-    // Comprobación de cruce de rangos
+
     const haySolapamiento = horariosExistentes.some((horario) => {
       const inicioExistente = horaAMinutos(horario.horaInicio);
       const finExistente = horaAMinutos(horario.horaFin);
+      if (Number.isNaN(inicioExistente) || Number.isNaN(finExistente)) return false;
 
-      // Existe solapamiento si: (NuevoInicio < ExistenteFin) Y (NuevoFin > ExistenteInicio)
       return inicioNuevo < finExistente && finNuevo > inicioExistente;
     });
 
@@ -62,9 +85,7 @@ export const validarHorario = async (req, res, next) => {
       });
     }
 
-    // Si todo está bien, pasa al controlador
     return next();
-    
   } catch (error) {
     return res.status(500).json({
       ok: false,

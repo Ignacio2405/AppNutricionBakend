@@ -14,8 +14,8 @@ const router = Router();
 
 router.post('/', verificarToken, validarRol(RolEnum.ADMIN,RolEnum.MEDICO), crearHistorialMedico);
 router.get('/',verificarToken, validarRol(RolEnum.ADMIN,RolEnum.MEDICO, RolEnum.PACIENTE), obtenerHistorialesMedicos);
-router.get('/paciente/:pacienteId',verificarToken, validarRol(RolEnum.ADMIN,RolEnum.MEDICO), obtenerHistorialPorPaciente);
-router.get('/:id',verificarToken, validarRol(RolEnum.ADMIN,RolEnum.MEDICO), obtenerHistorialMedicoPorId);
+router.get('/paciente/:pacienteId',verificarToken, validarRol(RolEnum.ADMIN,RolEnum.MEDICO,RolEnum.PACIENTE), obtenerHistorialPorPaciente);
+router.get('/:id',verificarToken, validarRol(RolEnum.ADMIN,RolEnum.MEDICO,RolEnum.PACIENTE), obtenerHistorialMedicoPorId);
 router.put('/:id',verificarToken, validarRol(RolEnum.ADMIN,RolEnum.MEDICO), actualizarHistorialMedico);
 router.delete('/:id', verificarToken, validarRol(RolEnum.ADMIN,RolEnum.MEDICO),eliminarHistorialMedico);
 
