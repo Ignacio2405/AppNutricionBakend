@@ -18,20 +18,20 @@ import historialMedico from './scr/routes/historialMedico.routes.js';
 import habitoAlimentario from './scr/routes/habitosAlimentarios.routes.js';
 import resultadosLaboratorioRoutes from "./scr/routes/resultadosLaboratorio.routes.js";
 import planComidasRoutes from "./scr/routes/planComidas.routes.js";
-import  MetaObjetivo from './scr/routes/metaObjetivo.routes.js';
+import MetaObjetivo from './scr/routes/metaObjetivo.routes.js';
 import reportesRoutes from './scr/routes/reportes.routes.js';
 import pagoRoutes from './scr/routes/pago.routes.js';
-const app = express();
 
+const app = express();
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, "0.0.0.0", () => {
-  console.log(`Servidor corriendo en puerto ${PORT}`);
-});
 
 // Middlewares de seguridad y utilidad
 app.use(helmet());
 
-const originesPermitidos = ['http://localhost:5173', 'https://mi-pagina.com'];
+const originesPermitidos = [
+  'http://localhost:5173',
+  process.env.FRONTEND_URL
+].filter(Boolean);
 
 app.use(cors({
     origin: function (origen, callback) {
@@ -59,23 +59,22 @@ app.use('/api/medicos', medico);
 app.use('/api/agenda', agenda);
 app.use('/api/turno', turno);
 app.use('/api/consulta', consulta);
-app.use('/api/excepcion', excpecion)
+app.use('/api/excepcion', excpecion);
 app.use('/api/historial-medico', historialMedico);
 app.use('/api/habitos', habitoAlimentario);
 app.use("/api/resultados-laboratorio", resultadosLaboratorioRoutes);
 app.use("/api/planes-comidas", planComidasRoutes);
 app.use('/api/metas-objetivos', MetaObjetivo);
 app.use("/api/reportes", reportesRoutes);
-app.use('/api/pagos', pagoRoutes );
+app.use('/api/pagos', pagoRoutes);
 
 const iniciarServidor = async () => {
     try {
-    
         await conectarDB();
 
         // Una vez conectada la BD, recién encendemos el servidor Express
-        app.listen(PORT, () => {
-            console.log(`Servidor Express corriendo en http://localhost:${PORT}`);
+        app.listen(PORT, "0.0.0.0", () => {
+            console.log(`Servidor corriendo en puerto ${PORT}`);
         });
     } catch (error) {
         console.error('No se pudo iniciar la aplicación debido a un error en la Base de Datos.');
