@@ -2,7 +2,7 @@ import { ConsultaMedica } from '../models/Consulta.js';
 import { Paciente } from '../models/Paciente.js';
 
 const PYTHON_API_URL = `${(
-  process.env.PYTHON_URL_LOCAL || 'http://127.0.0.1:8000'
+  process.env.PYTHON_CALC_URL || 'http://127.0.0.1:8000'
 ).replace(/\/+$/, '')}/calcular-antropometria`;
 const API_TOKEN = process.env.API_TOKEN || '';
 
