@@ -3,21 +3,38 @@ import {Paciente} from '../models/Paciente.js';
 import { Usuario } from '../models/Usuario.js';
 import mongoose, { Types } from 'mongoose';
 import { RolEnum } from '../enum/Rol.enum.js';
+import {
+    ejecutarConsultaPaginada,
+    obtenerParametrosPaginacion,
+} from '../utils/paginacion.js';
 
 export const getPacientes = async (req, res) => {
     try {
         const { obraSocial, dni } = req.query;
+        const paginacion = obtenerParametrosPaginacion(req.query);
+        if (!paginacion) {
+            return res.status(400).json({
+                ok: false,
+                mensaje: 'Los parámetros page y limit deben ser enteros positivos.'
+            });
+        }
         const filtro = {};
 
         if (obraSocial) filtro['obraSocial.razonSocial'] = obraSocial.toUpperCase();
         if (dni) filtro.dni = dni;
 
-        const pacientes = await Paciente.find(filtro);
+        const { data: pacientes, pagination } = await ejecutarConsultaPaginada(
+            Paciente.find(filtro).sort({ _id: 1 }),
+            Paciente,
+            filtro,
+            paginacion
+        );
 
         return res.status(200).json({
             ok: true,
             mensaje: 'Pacientes obtenidos exitosamente',
-            data: pacientes
+            data: pacientes,
+            pagination
         });
     } catch (error) {
         return res.status(500).json({

@@ -1,6 +1,10 @@
 import mongoose from "mongoose";
 import { ResultadosLaboratorio } from "../models/ResultadosLaboratorio.js";
 import { Paciente } from "../models/Paciente.js"; 
+import {
+  ejecutarConsultaPaginada,
+  obtenerParametrosPaginacion,
+} from "../utils/paginacion.js";
 
 // Convierte "", undefined o null en null para campos numéricos opcionales,
 // y convierte strings numéricos válidos (ej. "92.5") en Number.
@@ -111,6 +115,13 @@ export const obtenerResultadosLaboratorio = async (req, res) => {
   try {
     const { pacienteId } = req.query;
     const filtro = { activo: true };
+    const paginacion = obtenerParametrosPaginacion(req.query);
+    if (!paginacion) {
+      return res.status(400).json({
+        ok: false,
+        mensaje: "Los parámetros page y limit deben ser enteros positivos.",
+      });
+    }
 
     if (pacienteId) {
       if (!mongoose.Types.ObjectId.isValid(pacienteId)) {
@@ -122,14 +133,20 @@ export const obtenerResultadosLaboratorio = async (req, res) => {
       filtro.pacienteId = pacienteId;
     }
 
-    const lista = await ResultadosLaboratorio.find(filtro)
-      .populate("pacienteId", "nombre apellido dni")
-      .sort({ fechaEstudio: -1, createdAt: -1 });
+    const { data: lista, pagination } = await ejecutarConsultaPaginada(
+      ResultadosLaboratorio.find(filtro)
+        .populate("pacienteId", "nombre apellido dni")
+        .sort({ fechaEstudio: -1, createdAt: -1, _id: -1 }),
+      ResultadosLaboratorio,
+      filtro,
+      paginacion,
+    );
 
     return res.status(200).json({
       ok: true,
-      total: lista.length,
+      total: pagination.total,
       data: lista,
+      pagination,
     });
   } catch (error) {
     return res.status(500).json({

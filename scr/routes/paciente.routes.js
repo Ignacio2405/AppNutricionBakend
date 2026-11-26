@@ -9,7 +9,7 @@ const router = Router();
 
 router.post('/', verificarToken, validarRol(RolEnum.ADMIN, RolEnum.MEDICO, RolEnum.RECEPCIONISTA),createPaciente);
 
-router.get('/', verificarToken, validarRol(RolEnum.ADMIN, RolEnum.MEDICO, RolEnum.RECEPCIONISTA), getPacientes);
+router.get('/', verificarToken, validarRol(RolEnum.ADMIN, RolEnum.MEDICO, RolEnum.RECEPCIONISTA, RolEnum.PACIENTE), getPacientes);
 router.get('/:id', verificarToken, validarRol(RolEnum.ADMIN, RolEnum.MEDICO, RolEnum.RECEPCIONISTA, RolEnum.PACIENTE), getPacienteById);
 router.put('/:id', verificarToken,validarRol(RolEnum.ADMIN, RolEnum.MEDICO, RolEnum.RECEPCIONISTA, RolEnum.PACIENTE), updatePaciente);
 router.patch('/contacto-direccion/:id', verificarToken,validarRol(RolEnum.ADMIN, RolEnum.MEDICO, RolEnum.RECEPCIONISTA, RolEnum.PACIENTE), updateContactoDireccion);

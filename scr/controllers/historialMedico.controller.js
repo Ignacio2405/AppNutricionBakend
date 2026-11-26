@@ -4,6 +4,55 @@ import { Paciente } from '../models/Paciente.js';
 import { Medico } from '../models/Medico.js';
 import { ConsultaMedica } from '../models/Consulta.js';
 import { RolEnum } from '../enum/Rol.enum.js';
+import {
+  crearMetadataPaginacion,
+  ejecutarConsultaPaginada,
+  obtenerParametrosPaginacion,
+} from '../utils/paginacion.js';
+
+const zonaHorariaArgentina = 'America/Argentina/Buenos_Aires';
+const formatoFechaArgentina = new Intl.DateTimeFormat('en-CA', {
+  timeZone: zonaHorariaArgentina,
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+  second: '2-digit',
+  hourCycle: 'h23',
+});
+const formatoZonaHorariaArgentina = new Intl.DateTimeFormat('en', {
+  timeZone: zonaHorariaArgentina,
+  timeZoneName: 'longOffset',
+});
+
+const fechaConZonaArgentina = (fecha) => {
+  if (!(fecha instanceof Date) || Number.isNaN(fecha.getTime())) return fecha;
+
+  const partes = Object.fromEntries(
+    formatoFechaArgentina
+      .formatToParts(fecha)
+      .map(({ type, value }) => [type, value]),
+  );
+  const offset =
+    formatoZonaHorariaArgentina
+      .formatToParts(fecha)
+      .find(({ type }) => type === 'timeZoneName')
+      ?.value.replace(/^GMT/, '') || '+00:00';
+
+  return `${partes.year}-${partes.month}-${partes.day}T${partes.hour}:${partes.minute}:${partes.second}.${String(fecha.getUTCMilliseconds()).padStart(3, '0')}${offset}`;
+};
+
+const serializarHistorial = (historial) => {
+  const data =
+    typeof historial.toObject === 'function'
+      ? historial.toObject()
+      : { ...historial };
+
+  data.createdAt = fechaConZonaArgentina(data.createdAt);
+  data.updatedAt = fechaConZonaArgentina(data.updatedAt);
+  return data;
+};
 
 const buscarPacientePorUsuario = async (usuario) => {
   if (!usuario) return null;
@@ -26,7 +75,7 @@ const buscarMedicoPorUsuario = async (usuario) => {
   const emailNormalizado = String(usuario.email || '').toLowerCase().trim();
 
   const filtroActivo = {
-    $or: [{ activo: true }, { activo: { $exists: false } }],
+    $or: [{ activo: true }, { activo: {$exists: false } }],
   };
   if (usuarioId && mongoose.Types.ObjectId.isValid(usuarioId)) {
     const medicoVinculado = await Medico.findOne({
@@ -47,52 +96,113 @@ const medicoPuedeAccederAlPaciente = async (medicoId, pacienteId) =>
     activo: true,
   });
 
-// 1. Crear un nuevo historial médico
+const medicoEsCreador = (historial, medicoId) =>
+  String(historial.medicoCreadorId?._id || historial.medicoCreadorId || '') ===
+  String(medicoId);
+
 export const crearHistorialMedico = async (req, res) => {
   try {
-    const { pacienteId } = req.body;
-    const usuario = req.usuario || req.user;
-    const rolUsuario = String(usuario?.rol || '').toUpperCase();
+    const {
+      pacienteId,
+      patologiasActuales,
+      antecedentes,
+      medicamentosSuplementos,
+      alergiasIntolerancias,
+      saludDigestiva,
+      observacionesGinecoObstetricas,
+    } = req.body;
 
-    if (!mongoose.Types.ObjectId.isValid(pacienteId)) {
+    if (!pacienteId || !mongoose.Types.ObjectId.isValid(pacienteId)) {
       return res.status(400).json({
         ok: false,
-        mensaje: 'El ID del paciente no es válido',
+        mensaje: 'Debés seleccionar un paciente válido.',
       });
     }
 
+    const usuario = req.usuario || req.user;
+    const rolUsuario = String(usuario?.rol || '').toUpperCase();
+    let medicoCreadorId = null;
+
     if (rolUsuario === RolEnum.MEDICO) {
       const medicoDoc = await buscarMedicoPorUsuario(usuario);
-      if (
-        !medicoDoc ||
-        !(await medicoPuedeAccederAlPaciente(medicoDoc._id, pacienteId))
-      ) {
+      if (!medicoDoc) {
         return res.status(403).json({
           ok: false,
-          mensaje: 'No tenés permiso para crear un historial para este paciente',
+          mensaje: 'No se encontró un perfil médico activo asociado a tu usuario.',
         });
       }
+      if (!(await medicoPuedeAccederAlPaciente(medicoDoc._id, pacienteId))) {
+        return res.status(403).json({
+          ok: false,
+          mensaje:
+            'Primero debés crear una consulta médica para este paciente antes de registrar su historial médico.',
+        });
+      }
+      medicoCreadorId = medicoDoc._id;
+    } else if (rolUsuario !== RolEnum.ADMIN) {
+      return res.status(403).json({
+        ok: false,
+        mensaje: 'No tenés permiso para crear historiales médicos',
+      });
     }
 
-    const historialExistente = await HistorialMedico.findOne({ pacienteId });
+    const historialExistente = await HistorialMedico.findOne({
+      pacienteId,
+      medicoCreadorId,
+    });
     if (historialExistente) {
       return res.status(400).json({
         ok: false,
         mensaje: historialExistente.activo
-          ? 'El paciente ya posee un historial médico activo.'
-          : 'El paciente ya posee un historial médico desactivado. Puede reactivarlo o actualizarlo.',
+          ? 'Ya existe un historial activo de este paciente para el médico.'
+          : 'Ya existe un historial desactivado de este paciente para el médico.',
       });
     }
 
-    const nuevoHistorial = new HistorialMedico(req.body);
+    const medicamentosValidos = Array.isArray(medicamentosSuplementos)
+      ? medicamentosSuplementos
+          .filter(
+            (m) =>
+              m && typeof m.nombre === 'string' && m.nombre.trim() !== '',
+          )
+          .map((m) => ({
+            nombre: m.nombre.trim(),
+            dosis: m.dosis?.trim() || undefined,
+            frecuencia: m.frecuencia?.trim() || undefined,
+          }))
+      : [];
+
+    const nuevoHistorial = new HistorialMedico({
+      pacienteId,
+      medicoCreadorId,
+      patologiasActuales: Array.isArray(patologiasActuales)
+        ? patologiasActuales
+        : [],
+      antecedentes: antecedentes || {},
+      medicamentosSuplementos: medicamentosValidos,
+      alergiasIntolerancias: Array.isArray(alergiasIntolerancias)
+        ? alergiasIntolerancias
+        : [],
+      saludDigestiva: saludDigestiva || {},
+      observacionesGinecoObstetricas:
+        observacionesGinecoObstetricas?.trim() || undefined,
+    });
+
     await nuevoHistorial.save();
 
     return res.status(201).json({
       ok: true,
       mensaje: 'Historial médico creado correctamente',
-      data: nuevoHistorial,
+      data: serializarHistorial(nuevoHistorial),
     });
   } catch (error) {
+    console.error('Error en crearHistorialMedico:', error);
+    if (error.code === 11000) {
+      return res.status(409).json({
+        ok: false,
+        mensaje: 'Ya existe un historial para este paciente y este creador.',
+      });
+    }
     return res.status(400).json({
       ok: false,
       mensaje: 'Error al crear el historial médico',
@@ -107,6 +217,13 @@ export const obtenerHistorialesMedicos = async (req, res) => {
     const usuario = req.usuario || req.user;
     const rolUsuario = String(usuario?.rol || '').toUpperCase();
     const filtro = { activo: true };
+    const paginacion = obtenerParametrosPaginacion(req.query);
+    if (!paginacion) {
+      return res.status(400).json({
+        ok: false,
+        mensaje: 'Los parámetros page y limit deben ser enteros positivos.',
+      });
+    }
 
     if (rolUsuario === RolEnum.PACIENTE) {
       const pacienteDoc = await buscarPacientePorUsuario(usuario);
@@ -114,6 +231,11 @@ export const obtenerHistorialesMedicos = async (req, res) => {
         return res.status(200).json({
           ok: true,
           data: [],
+          pagination: crearMetadataPaginacion(
+            paginacion.page,
+            paginacion.limit,
+            0,
+          ),
         });
       }
       filtro.pacienteId = pacienteDoc._id;
@@ -123,23 +245,29 @@ export const obtenerHistorialesMedicos = async (req, res) => {
         return res.status(200).json({
           ok: true,
           data: [],
+          pagination: crearMetadataPaginacion(
+            paginacion.page,
+            paginacion.limit,
+            0,
+          ),
         });
       }
-
-      const pacientesIds = await ConsultaMedica.distinct('paciente', {
-        medico: medicoDoc._id,
-        activo: true,
-      });
-      filtro.pacienteId = { $in: pacientesIds };
+      filtro.medicoCreadorId = medicoDoc._id;
     }
 
-    const historiales = await HistorialMedico.find(filtro)
-      .populate('pacienteId', 'nombre apellido dni email')
-      .sort({ createdAt: -1 });
+    const { data: historiales, pagination } = await ejecutarConsultaPaginada(
+      HistorialMedico.find(filtro)
+        .populate('pacienteId', 'nombre apellido dni email')
+        .sort({ createdAt: -1, _id: -1 }),
+      HistorialMedico,
+      filtro,
+      paginacion,
+    );
 
     return res.status(200).json({
       ok: true,
-      data: historiales,
+      data: historiales.map(serializarHistorial),
+      pagination,
     });
   } catch (error) {
     return res.status(500).json({
@@ -155,7 +283,10 @@ export const obtenerHistorialMedicoPorId = async (req, res) => {
   try {
     const { id } = req.params;
     const historial = await HistorialMedico.findOne({ _id: id, activo: true })
-      .populate('pacienteId', 'nombre apellido dni email fechaNacimiento sexo');
+      .populate(
+        'pacienteId',
+        'nombre apellido dni email fechaNacimiento sexo',
+      );
 
     if (!historial) {
       return res.status(404).json({
@@ -183,7 +314,8 @@ export const obtenerHistorialMedicoPorId = async (req, res) => {
       const pacienteId = historial.pacienteId?._id || historial.pacienteId;
       if (
         !medicoDoc ||
-        !(await medicoPuedeAccederAlPaciente(medicoDoc._id, pacienteId))
+        (!medicoEsCreador(historial, medicoDoc._id) &&
+          !(await medicoPuedeAccederAlPaciente(medicoDoc._id, pacienteId)))
       ) {
         return res.status(403).json({
           ok: false,
@@ -194,7 +326,7 @@ export const obtenerHistorialMedicoPorId = async (req, res) => {
 
     return res.status(200).json({
       ok: true,
-      data: historial,
+      data: serializarHistorial(historial),
     });
   } catch (error) {
     return res.status(500).json({
@@ -211,30 +343,34 @@ export const obtenerHistorialPorPaciente = async (req, res) => {
     const { pacienteId } = req.params;
     const usuario = req.usuario || req.user;
     const rolUsuario = String(usuario?.rol || '').toUpperCase();
+    const filtroHistorial = { pacienteId, activo: true };
 
     if (rolUsuario === RolEnum.PACIENTE) {
       const pacienteDoc = await buscarPacientePorUsuario(usuario);
       if (!pacienteDoc || String(pacienteDoc._id) !== String(pacienteId)) {
         return res.status(403).json({
           ok: false,
-          mensaje: 'No tenés permiso para consultar el historial de otro paciente',
+          mensaje:
+            'No tenés permiso para consultar el historial de otro paciente',
         });
       }
     } else if (rolUsuario === RolEnum.MEDICO) {
       const medicoDoc = await buscarMedicoPorUsuario(usuario);
-      if (
-        !medicoDoc ||
-        !(await medicoPuedeAccederAlPaciente(medicoDoc._id, pacienteId))
-      ) {
+      if (!medicoDoc) {
         return res.status(403).json({
           ok: false,
           mensaje: 'No tenés permiso para consultar este historial médico',
         });
       }
+      filtroHistorial.medicoCreadorId = medicoDoc._id;
     }
 
-    const historial = await HistorialMedico.findOne({ pacienteId, activo: true })
-      .populate('pacienteId', 'nombre apellido dni email fechaNacimiento sexo');
+    const historial = await HistorialMedico.findOne(filtroHistorial)
+      .populate(
+        'pacienteId',
+        'nombre apellido dni email fechaNacimiento sexo',
+      )
+      .sort({ createdAt: -1 });
 
     if (!historial) {
       return res.status(404).json({
@@ -245,7 +381,7 @@ export const obtenerHistorialPorPaciente = async (req, res) => {
 
     return res.status(200).json({
       ok: true,
-      data: historial,
+      data: serializarHistorial(historial),
     });
   } catch (error) {
     return res.status(500).json({
@@ -260,7 +396,12 @@ export const obtenerHistorialPorPaciente = async (req, res) => {
 export const actualizarHistorialMedico = async (req, res) => {
   try {
     const { id } = req.params;
-    const { pacienteId, activo, ...datosActualizados } = req.body;
+    const {
+      pacienteId,
+      activo,
+      ...datosActualizados
+    } = req.body;
+    delete datosActualizados.medicoCreadorId;
     const usuario = req.usuario || req.user;
     const rolUsuario = String(usuario?.rol || '').toUpperCase();
     const filtro = { _id: id, activo: true };
@@ -277,10 +418,11 @@ export const actualizarHistorialMedico = async (req, res) => {
       if (
         !medicoDoc ||
         !historialActual ||
-        !(await medicoPuedeAccederAlPaciente(
-          medicoDoc._id,
-          historialActual.pacienteId,
-        ))
+        (!medicoEsCreador(historialActual, medicoDoc._id) &&
+          !(await medicoPuedeAccederAlPaciente(
+            medicoDoc._id,
+            historialActual.pacienteId,
+          )))
       ) {
         return res.status(403).json({
           ok: false,
@@ -306,7 +448,7 @@ export const actualizarHistorialMedico = async (req, res) => {
     return res.status(200).json({
       ok: true,
       mensaje: 'Historial médico actualizado correctamente',
-      data: historialActualizado,
+      data: serializarHistorial(historialActualizado),
     });
   } catch (error) {
     return res.status(400).json({
@@ -331,10 +473,11 @@ export const eliminarHistorialMedico = async (req, res) => {
       if (
         !medicoDoc ||
         !historialActual ||
-        !(await medicoPuedeAccederAlPaciente(
-          medicoDoc._id,
-          historialActual.pacienteId,
-        ))
+        (!medicoEsCreador(historialActual, medicoDoc._id) &&
+          !(await medicoPuedeAccederAlPaciente(
+            medicoDoc._id,
+            historialActual.pacienteId,
+          )))
       ) {
         return res.status(403).json({
           ok: false,

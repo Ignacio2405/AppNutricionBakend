@@ -2,6 +2,11 @@ import mongoose from 'mongoose';
 import { ExcepcionAgenda } from '../models/ExcepcionAgenda.js';
 import { Medico } from '../models/Medico.js';
 import { RolEnum } from '../enum/Rol.enum.js';
+import {
+  crearMetadataPaginacion,
+  ejecutarConsultaPaginada,
+  obtenerParametrosPaginacion,
+} from '../utils/paginacion.js';
 
 const buscarMedicoPorUsuario = async (usuario) => {
   if (!usuario) return null;
@@ -48,6 +53,13 @@ export const getExcepcionesAgenda = async (req, res) => {
     const { medico, fecha } = req.query;
     const usuario = req.usuario || req.user;
     const rolUsuario = String(usuario?.rol || '').toUpperCase();
+    const paginacion = obtenerParametrosPaginacion(req.query);
+    if (!paginacion) {
+      return res.status(400).json({
+        ok: false,
+        mensaje: 'Los parámetros page y limit deben ser enteros positivos.',
+      });
+    }
 
     const filtro = { activo: true };
 
@@ -58,6 +70,11 @@ export const getExcepcionesAgenda = async (req, res) => {
           ok: true,
           mensaje: 'No se encontró un perfil médico asociado a tu usuario',
           data: [],
+          pagination: crearMetadataPaginacion(
+            paginacion.page,
+            paginacion.limit,
+            0,
+          ),
         });
       }
       filtro.medico = medicoDoc._id;
@@ -75,14 +92,21 @@ export const getExcepcionesAgenda = async (req, res) => {
       }
     }
 
-    const excepciones = await ExcepcionAgenda.find(filtro)
-      .populate('medico', 'nombre apellido')
-      .sort({ fecha: -1, createdAt: -1 });
+    const { data: excepciones, pagination: metadata } =
+      await ejecutarConsultaPaginada(
+        ExcepcionAgenda.find(filtro)
+          .populate('medico', 'nombre apellido')
+          .sort({ fecha: -1, createdAt: -1, _id: -1 }),
+        ExcepcionAgenda,
+        filtro,
+        paginacion,
+      );
 
     return res.status(200).json({
       ok: true,
       mensaje: 'Excepciones obtenidas correctamente',
       data: excepciones,
+      pagination: metadata,
     });
   } catch (error) {
     return res.status(500).json({

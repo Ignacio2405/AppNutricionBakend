@@ -1,19 +1,66 @@
 import mongoose from "mongoose";
 import { PlanComidas } from "../models/PlanComidas.js";
+import { Paciente } from "../models/Paciente.js";
 import "../models/Consulta.js";
-import "../models/Paciente.js";
+import { RolEnum } from "../enum/Rol.enum.js";
+import {
+  ejecutarConsultaPaginada,
+  obtenerParametrosPaginacion,
+} from "../utils/paginacion.js";
 
 const esObjectIdValido = (id) => mongoose.Types.ObjectId.isValid(id);
 
 const normalizarArray = (valor) => (Array.isArray(valor) ? valor : []);
+
+const buscarPacientePorUsuario = async (usuario) => {
+  if (!usuario) return null;
+  const usuarioId = usuario.id || usuario._id;
+  const emailNormalizado = String(usuario.email || "").toLowerCase().trim();
+
+  if (usuarioId && esObjectIdValido(usuarioId)) {
+    const pacienteVinculado = await Paciente.findOne({
+      usuario: new mongoose.Types.ObjectId(usuarioId),
+    }).lean();
+    if (pacienteVinculado) return pacienteVinculado;
+  }
+
+  return emailNormalizado
+    ? Paciente.findOne({ email: emailNormalizado }).lean()
+    : null;
+};
 
 // GET /api/planes-comidas
 export const getPlanesComidas = async (req, res) => {
   try {
     const { patientId, consultationId, planActivo } = req.query;
     const filtro = { activo: true };
+    const paginacion = obtenerParametrosPaginacion(req.query);
+    if (!paginacion) {
+      return res.status(400).json({
+        ok: false,
+        mensaje: "Los parámetros page y limit deben ser enteros positivos.",
+      });
+    }
 
-    if (patientId) {
+    const usuario = req.usuario || req.user;
+    const rolUsuario = String(usuario?.rol || "").toUpperCase();
+
+    if (rolUsuario === RolEnum.PACIENTE || rolUsuario === "PACIENTE") {
+      const pacienteDoc = await buscarPacientePorUsuario(usuario);
+      if (!pacienteDoc) {
+        return res.status(200).json({
+          ok: true,
+          data: [],
+          pagination: {
+            page: paginacion.page,
+            limit: paginacion.limit,
+            total: 0,
+            totalPages: 1,
+          },
+        });
+      }
+      filtro.patientId = pacienteDoc._id;
+    } else if (patientId) {
       if (!esObjectIdValido(patientId)) {
         return res.status(400).json({
           ok: false,
@@ -37,14 +84,20 @@ export const getPlanesComidas = async (req, res) => {
       filtro.planActivo = planActivo === "true";
     }
 
-    const planes = await PlanComidas.find(filtro)
-      .populate("patientId", "nombre apellido dni email telefono")
-      .populate("consultationId", "fecha hora observaciones")
-      .sort({ fechaInicioVigencia: -1, createdAt: -1 });
+    const { data: planes, pagination } = await ejecutarConsultaPaginada(
+      PlanComidas.find(filtro)
+        .populate("patientId", "nombre apellido dni email telefono")
+        .populate("consultationId", "fecha hora observaciones")
+        .sort({ fechaInicioVigencia: -1, createdAt: -1, _id: -1 }),
+      PlanComidas,
+      filtro,
+      paginacion,
+    );
 
     return res.status(200).json({
       ok: true,
       data: planes,
+      pagination,
     });
   } catch (error) {
     console.error("Error al obtener planes de comidas:", error);
@@ -77,6 +130,21 @@ export const getPlanComidasById = async (req, res) => {
         ok: false,
         mensaje: "Plan de comidas no encontrado.",
       });
+    }
+
+    const usuario = req.usuario || req.user;
+    const rolUsuario = String(usuario?.rol || "").toUpperCase();
+    if (rolUsuario === RolEnum.PACIENTE || rolUsuario === "PACIENTE") {
+      const pacienteDoc = await buscarPacientePorUsuario(usuario);
+      const planPacienteId = String(
+        plan.patientId?._id || plan.patientId || "",
+      );
+      if (!pacienteDoc || planPacienteId !== String(pacienteDoc._id)) {
+        return res.status(403).json({
+          ok: false,
+          mensaje: "No tenés permiso para ver este plan de comidas.",
+        });
+      }
     }
 
     return res.status(200).json({

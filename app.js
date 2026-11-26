@@ -3,8 +3,7 @@ import helmet from 'helmet';
 import morgan from 'morgan';
 import cors from 'cors';
 import 'dotenv/config';
-import { conectarDB } from './scr/config/db.js'; 
-import { limitadorGlobal } from './scr/middlewares/rateLimit.middleware.js';
+import { conectarDB } from './scr/config/db.js';
 // importacion de Rutas
 import authRoutes from './scr/routes/auth.routes.js';
 import pacienteRoutes from './scr/routes/paciente.routes.js';
@@ -44,7 +43,6 @@ app.use(cors({
 }));
 
 app.use(morgan('dev'));
-app.use(limitadorGlobal);
 app.use(express.json());
 
 app.get('/', (req, res) => {
@@ -78,7 +76,7 @@ const iniciarServidor = async () => {
         });
     } catch (error) {
         console.error('No se pudo iniciar la aplicación debido a un error en la Base de Datos.');
-        process.exit(1); 
+        process.exit(1);
     }
 };
 

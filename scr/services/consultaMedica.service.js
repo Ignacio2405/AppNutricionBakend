@@ -81,6 +81,37 @@ const normalizarResultados = (raw = {}) => {
   };
 };
 
+const etiquetasMediciones = {
+  peso: 'Peso',
+  talla: 'Talla',
+  cuello: 'Cuello',
+  brazo: 'Brazo',
+  cintura: 'Cintura',
+  cadera: 'Cadera',
+  pTricipital: 'Pliegue tricipital',
+  pBicipital: 'Pliegue bicipital',
+  pSubescapular: 'Pliegue subescapular',
+  pSuprailiaco: 'Pliegue suprailiaco',
+};
+
+const formatearDetalleValidacion = (detalle) => {
+  if (typeof detalle === 'string') return detalle;
+  if (!detalle || typeof detalle !== 'object' || Array.isArray(detalle)) {
+    return '';
+  }
+
+  return Object.entries(detalle)
+    .flatMap(([campo, mensajes]) => {
+      const nombreCampo = campo.split('.').pop();
+      const etiqueta = etiquetasMediciones[nombreCampo] || nombreCampo;
+      const listaMensajes = Array.isArray(mensajes) ? mensajes : [mensajes];
+      return listaMensajes
+        .filter((mensaje) => typeof mensaje === 'string' && mensaje.trim())
+        .map((mensaje) => `${etiqueta}: ${mensaje}`);
+    })
+    .join('; ');
+};
+
 const construirPayloadAntropometria = async (datos) => {
   const pacienteDoc =
     datos.paciente && typeof datos.paciente === 'object'
@@ -127,10 +158,25 @@ const solicitarCalculosPython = async (payload) => {
     });
 
     if (!response.ok) {
-      const textoError = await response.text().catch(() => '');
-      throw new Error(
-        `Error en microservicio Python (${response.status}): ${textoError || response.statusText}`,
-      );
+      const textoRespuesta = await response.text();
+      let cuerpoRespuesta;
+      try {
+        cuerpoRespuesta = textoRespuesta ? JSON.parse(textoRespuesta) : null;
+      } catch {
+        cuerpoRespuesta = null;
+      }
+
+      const detalle =
+        formatearDetalleValidacion(cuerpoRespuesta?.detail) ||
+        (typeof cuerpoRespuesta?.message === 'string'
+          ? cuerpoRespuesta.message
+          : '') ||
+        (!cuerpoRespuesta ? textoRespuesta.trim() : '');
+      const mensaje =
+        response.status === 422
+          ? `Los datos antropométricos no son válidos${detalle ? `: ${detalle}` : '.'}`
+          : `No se pudieron calcular los datos antropométricos${detalle ? `: ${detalle}` : ` (HTTP ${response.status})`}`;
+      throw new Error(mensaje);
     }
 
     const json = await response.json();

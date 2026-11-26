@@ -10,6 +10,15 @@ import { ConsultaMedica } from '../models/Consulta.js';
 import { Medico } from '../models/Medico.js';
 import { Paciente } from '../models/Paciente.js';
 import { RolEnum } from '../enum/Rol.enum.js';
+import {
+  normalizarFechaCalendarioArgentina,
+  obtenerFechaHoyArgentina,
+} from '../utils/fecha.js';
+import {
+  crearMetadataPaginacion,
+  ejecutarConsultaPaginada,
+  obtenerParametrosPaginacion,
+} from '../utils/paginacion.js';
 
 const buscarMedicoPorUsuario = async (usuario) => {
   if (!usuario) return null;
@@ -46,11 +55,49 @@ const buscarPacientePorUsuario = async (usuario) => {
     : null;
 };
 
+const obtenerDetalleErrorConsulta = (error) => {
+  if (error?.name === 'ValidationError') {
+    return Object.values(error.errors || {})
+      .map((validacion) => validacion.message)
+      .filter(Boolean)
+      .join('; ');
+  }
+  if (error?.name === 'CastError') {
+    return `El campo ${error.path} tiene un valor inválido`;
+  }
+  return error?.message || 'Error inesperado';
+};
+
 export const crearConsulta = async (req, res) => {
   try {
     const usuario = req.usuario || req.user;
     const rolUsuario = String(usuario?.rol || '').toUpperCase();
     const datosParaCrear = { ...req.body };
+
+    if (datosParaCrear.fecha !== undefined) {
+      const fechaConsulta = normalizarFechaCalendarioArgentina(
+        datosParaCrear.fecha,
+      );
+      if (!fechaConsulta) {
+        const mensaje = 'La fecha de consulta no es válida; debe usar el formato YYYY-MM-DD';
+        return res.status(400).json({
+          ok: false,
+          mensaje,
+          error: mensaje,
+          campo: 'fecha',
+        });
+      }
+      const fechaHoy = obtenerFechaHoyArgentina();
+      if (fechaConsulta < fechaHoy) {
+        const mensaje = `No se puede registrar la consulta porque la fecha ${fechaConsulta} es anterior a hoy (${fechaHoy})`;
+        return res.status(400).json({
+          ok: false,
+          mensaje,
+          error: mensaje,
+          campo: 'fecha',
+        });
+      }
+    }
 
     if (rolUsuario === RolEnum.MEDICO) {
       const medicoDoc = await buscarMedicoPorUsuario(usuario);
@@ -71,10 +118,11 @@ export const crearConsulta = async (req, res) => {
       data: consulta,
     });
   } catch (error) {
-   console.error("Error en crearConsulta:", error);
+    console.error('Error en crearConsulta:', error);
+    const detalle = obtenerDetalleErrorConsulta(error);
     return res.status(400).json({
       ok: false,
-      mensaje: 'Error al registrar la consulta',
+      mensaje: `No se pudo registrar la consulta: ${detalle}`,
       error: error.message,
     });
   }
@@ -86,6 +134,13 @@ export const obtenerConsultas = async (req, res) => {
     const { pacienteId } = req.query;
     const usuario = req.usuario || req.user;
     const rolUsuario = String(usuario?.rol || '').toUpperCase();
+    const paginacion = obtenerParametrosPaginacion(req.query);
+    if (!paginacion) {
+      return res.status(400).json({
+        ok: false,
+        mensaje: 'Los parámetros page y limit deben ser enteros positivos.',
+      });
+    }
 
     if (pacienteId && mongoose.Types.ObjectId.isValid(pacienteId)) {
       filtro.paciente = new mongoose.Types.ObjectId(pacienteId);
@@ -97,6 +152,11 @@ export const obtenerConsultas = async (req, res) => {
         return res.status(200).json({
           ok: true,
           data: [],
+          pagination: crearMetadataPaginacion(
+            paginacion.page,
+            paginacion.limit,
+            0,
+          ),
         });
       }
       filtro.paciente = pacienteDoc._id;
@@ -106,19 +166,30 @@ export const obtenerConsultas = async (req, res) => {
         return res.status(200).json({
           ok: true,
           data: [],
+          pagination: crearMetadataPaginacion(
+            paginacion.page,
+            paginacion.limit,
+            0,
+          ),
         });
       }
       filtro.medico = medicoDoc._id;
     }
 
-    const consultas = await ConsultaMedica.find(filtro)
-      .populate('paciente')
-      .populate('medico')
-      .sort({ fecha: -1 });
+    const { data: consultas, pagination } = await ejecutarConsultaPaginada(
+      ConsultaMedica.find(filtro)
+        .populate('paciente')
+        .populate('medico')
+        .sort({ fecha: -1, _id: -1 }),
+      ConsultaMedica,
+      filtro,
+      paginacion,
+    );
 
     return res.status(200).json({
       ok: true,
       data: consultas,
+      pagination,
     });
   } catch (error) {
     return res.status(500).json({
@@ -181,6 +252,31 @@ export const actualizarConsulta = async (req, res) => {
     const rolUsuario = String(usuario?.rol || '').toUpperCase();
     const datosActualizacion = { ...req.body };
 
+    if (datosActualizacion.fecha !== undefined) {
+      const fechaConsulta = normalizarFechaCalendarioArgentina(
+        datosActualizacion.fecha,
+      );
+      if (!fechaConsulta) {
+        const mensaje = 'La fecha de consulta no es válida; debe usar el formato YYYY-MM-DD';
+        return res.status(400).json({
+          ok: false,
+          mensaje,
+          error: mensaje,
+          campo: 'fecha',
+        });
+      }
+      const fechaHoy = obtenerFechaHoyArgentina();
+      if (fechaConsulta < fechaHoy) {
+        const mensaje = `No se puede actualizar la consulta porque la fecha ${fechaConsulta} es anterior a hoy (${fechaHoy})`;
+        return res.status(400).json({
+          ok: false,
+          mensaje,
+          error: mensaje,
+          campo: 'fecha',
+        });
+      }
+    }
+
     if (rolUsuario === RolEnum.MEDICO) {
       const existente = await obtenerConsultaPorIdService(req.params.id);
       const medicoDoc = await buscarMedicoPorUsuario(usuario);
@@ -219,9 +315,10 @@ export const actualizarConsulta = async (req, res) => {
       data: consulta,
     });
   } catch (error) {
+    const detalle = obtenerDetalleErrorConsulta(error);
     return res.status(400).json({
       ok: false,
-      mensaje: 'Error al actualizar la consulta',
+      mensaje: `No se pudo actualizar la consulta: ${detalle}`,
       error: error.message,
     });
   }

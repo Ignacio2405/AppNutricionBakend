@@ -73,7 +73,13 @@ const HistorialMedicoSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Paciente',
       required: true,
-      unique: true
+    },
+
+    medicoCreadorId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Medico',
+      default: null,
+      immutable: true,
     },
 
     patologiasActuales: [
@@ -118,6 +124,11 @@ const HistorialMedicoSchema = new mongoose.Schema(
   {
     timestamps: true
   }
+);
+
+HistorialMedicoSchema.index(
+  { pacienteId: 1, medicoCreadorId: 1 },
+  { unique: true },
 );
 
 export const HistorialMedico = mongoose.model(

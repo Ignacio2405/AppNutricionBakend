@@ -1,6 +1,10 @@
 import mongoose from "mongoose";
 import { HabitosAlimentarios } from "../models/HabitosAlimentarios.js";
 import { Paciente } from "../models/Paciente.js"; // Ajustá el nombre/ruta si tu modelo se llama distinto
+import {
+  ejecutarConsultaPaginada,
+  obtenerParametrosPaginacion,
+} from "../utils/paginacion.js";
 
 // Helper para normalizar listas de alimentos si vienen como string separado por comas o como array
 const normalizarLista = (valor) => {
@@ -91,6 +95,13 @@ export const obtenerHabitosAlimentarios = async (req, res) => {
   try {
     const { pacienteId } = req.query;
     const filtro = { activo: true };
+    const paginacion = obtenerParametrosPaginacion(req.query);
+    if (!paginacion) {
+      return res.status(400).json({
+        ok: false,
+        mensaje: "Los parámetros page y limit deben ser enteros positivos.",
+      });
+    }
 
     if (pacienteId) {
       if (!mongoose.Types.ObjectId.isValid(pacienteId)) {
@@ -102,14 +113,20 @@ export const obtenerHabitosAlimentarios = async (req, res) => {
       filtro.pacienteId = pacienteId;
     }
 
-    const lista = await HabitosAlimentarios.find(filtro)
-      .populate("pacienteId", "nombre apellido dni")
-      .sort({ createdAt: -1 });
+    const { data: lista, pagination } = await ejecutarConsultaPaginada(
+      HabitosAlimentarios.find(filtro)
+        .populate("pacienteId", "nombre apellido dni")
+        .sort({ createdAt: -1, _id: -1 }),
+      HabitosAlimentarios,
+      filtro,
+      paginacion,
+    );
 
     return res.status(200).json({
       ok: true,
-      total: lista.length,
+      total: pagination.total,
       data: lista,
+      pagination,
     });
   } catch (error) {
     return res.status(500).json({

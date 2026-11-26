@@ -2,6 +2,11 @@ import mongoose from 'mongoose';
 import { Agenda } from '../models/Agenda.js';
 import { Medico } from '../models/Medico.js';
 import { RolEnum } from '../enum/Rol.enum.js';
+import {
+  crearMetadataPaginacion,
+  ejecutarConsultaPaginada,
+  obtenerParametrosPaginacion,
+} from '../utils/paginacion.js';
 
 const buscarMedicoPorUsuario = async (usuario) => {
   if (!usuario) return null;
@@ -28,6 +33,13 @@ const getAgenda = async (req, res) => {
     const { medico, diaSemana } = req.query;
     const usuario = req.usuario || req.user;
     const rolUsuario = String(usuario?.rol || '').toUpperCase();
+    const paginacion = obtenerParametrosPaginacion(req.query);
+    if (!paginacion) {
+      return res.status(400).json({
+        ok: false,
+        mensaje: 'Los parámetros page y limit deben ser enteros positivos.',
+      });
+    }
 
     const filtro = { activo: true };
 
@@ -38,6 +50,11 @@ const getAgenda = async (req, res) => {
           ok: true,
           mensaje: 'No se encontró un perfil médico asociado a tu usuario',
           data: [],
+          pagination: crearMetadataPaginacion(
+            paginacion.page,
+            paginacion.limit,
+            0,
+          ),
         });
       }
       filtro.medico = medicoDoc._id;
@@ -47,12 +64,19 @@ const getAgenda = async (req, res) => {
 
     if (diaSemana) filtro.diaSemana = diaSemana;
 
-    const horario = await Agenda.find(filtro).populate('medico');
+    const { data: horario, pagination: metadata } =
+      await ejecutarConsultaPaginada(
+        Agenda.find(filtro).populate('medico').sort({ _id: 1 }),
+        Agenda,
+        filtro,
+        paginacion,
+      );
 
     return res.status(200).json({
       ok: true,
       mensaje: 'Agenda obtenida correctamente',
       data: horario,
+      pagination: metadata,
     });
   } catch (error) {
     return res.status(500).json({

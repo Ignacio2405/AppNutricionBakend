@@ -1,9 +1,20 @@
 import { ObraSocial } from '../models/ObraSocial.js'; 
+import {
+    ejecutarConsultaPaginada,
+    obtenerParametrosPaginacion,
+} from '../utils/paginacion.js';
 
 
 export const getObrasSociales = async (req, res) => {
     try {
         const { razonSocial, cuit } = req.query;
+        const paginacion = obtenerParametrosPaginacion(req.query);
+        if (!paginacion) {
+            return res.status(400).json({
+                ok: false,
+                mensaje: 'Los parámetros page y limit deben ser enteros positivos.'
+            });
+        }
         const filtro = { activo: true }; 
 
         if (razonSocial) {
@@ -13,12 +24,18 @@ export const getObrasSociales = async (req, res) => {
             filtro.cuit = cuit;
         }
         
-        const obrasSociales = await ObraSocial.find(filtro).select('+activo');
+        const { data: obrasSociales, pagination } = await ejecutarConsultaPaginada(
+            ObraSocial.find(filtro).select('+activo').sort({ _id: 1 }),
+            ObraSocial,
+            filtro,
+            paginacion
+        );
 
         return res.status(200).json({
             ok: true,
             mensaje: 'Obras sociales obtenidas exitosamente',
-            data: obrasSociales
+            data: obrasSociales,
+            pagination
         });
     } catch (error) {
         return res.status(500).json({

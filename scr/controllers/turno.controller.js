@@ -9,6 +9,15 @@ import { Paciente } from '../models/Paciente.js';
 import { Medico } from '../models/Medico.js';
 import { ConsultaMedica } from '../models/Consulta.js';
 import { RolEnum } from '../enum/Rol.enum.js';
+import {
+  normalizarFechaCalendarioArgentina,
+  obtenerFechaHoyArgentina,
+} from '../utils/fecha.js';
+import {
+  crearMetadataPaginacion,
+  ejecutarConsultaPaginada,
+  obtenerParametrosPaginacion,
+} from '../utils/paginacion.js';
 
 const DIAS_MAPA = {
   0: DiasSemanasEnum.DOMINGO,
@@ -21,11 +30,7 @@ const DIAS_MAPA = {
 };
 
 const obtenerFechaHoyStr = () => {
-  const hoyObj = new Date();
-  const anio = hoyObj.getFullYear();
-  const mes = String(hoyObj.getMonth() + 1).padStart(2, '0');
-  const dia = String(hoyObj.getDate()).padStart(2, '0');
-  return `${anio}-${mes}-${dia}`;
+  return obtenerFechaHoyArgentina();
 };
 
 const generarSlots = (horaInicio, horaFin, duracionMinutos) => {
@@ -103,12 +108,25 @@ export const getTurnos = async (req, res) => {
   try {
     const { id, medico, fecha } = req.query;
     const usuario = req.usuario || req.user;
+    const paginacion = obtenerParametrosPaginacion(req.query);
+    if (!paginacion) {
+      return res.status(400).json({
+        ok: false,
+        mensaje: 'Los parámetros page y limit deben ser enteros positivos.',
+      });
+    }
+
     const alcance = await obtenerFiltroPorUsuario(usuario);
     if (!alcance) {
       return res.status(200).json({
         ok: true,
         mensaje: 'No se encontró un perfil asociado a tu usuario',
         data: [],
+        pagination: crearMetadataPaginacion(
+          paginacion.page,
+          paginacion.limit,
+          0,
+        ),
       });
     }
 
@@ -144,15 +162,21 @@ export const getTurnos = async (req, res) => {
       },
     };
 
-    const turnos = await Turno.find(filtro)
-      .populate(pacientePopulate)
-      .populate('medico', 'nombre apellido')
-      .sort({ fecha: 1, hora: 1 });
+    const { data: turnos, pagination } = await ejecutarConsultaPaginada(
+      Turno.find(filtro)
+        .populate(pacientePopulate)
+        .populate('medico', 'nombre apellido')
+        .sort({ fecha: 1, hora: 1, _id: 1 }),
+      Turno,
+      filtro,
+      paginacion,
+    );
 
     return res.status(200).json({
       ok: true,
       mensaje: 'Turnos obtenidos exitosamente',
       data: turnos,
+      pagination,
     });
   } catch (error) {
     return res.status(500).json({
@@ -614,19 +638,13 @@ export const createTurno = async (req, res) => {
       }
     }
 
-    const fechaObjTurno = new Date(fecha);
-
-    if (isNaN(fechaObjTurno.getTime())) {
+    const fechaTurnoStr = normalizarFechaCalendarioArgentina(fecha);
+    if (!fechaTurnoStr) {
       return res.status(400).json({
         ok: false,
         mensaje: 'El formato de la fecha no es válido.',
       });
     }
-
-    const anioT = fechaObjTurno.getUTCFullYear();
-    const mesT = String(fechaObjTurno.getUTCMonth() + 1).padStart(2, '0');
-    const diaT = String(fechaObjTurno.getUTCDate()).padStart(2, '0');
-    const fechaTurnoStr = `${anioT}-${mesT}-${diaT}`;
 
     const hoyStr = obtenerFechaHoyStr();
 
@@ -873,6 +891,13 @@ export const getTurnosPendientesHistoricos = async (req, res) => {
   try {
     const hoyStr = obtenerFechaHoyStr();
     const finHoy = new Date(`${hoyStr}T23:59:59.999Z`);
+    const paginacion = obtenerParametrosPaginacion(req.query);
+    if (!paginacion) {
+      return res.status(400).json({
+        ok: false,
+        mensaje: 'Los parámetros page y limit deben ser enteros positivos.',
+      });
+    }
 
     const pacientePopulate = {
       path: 'paciente',
@@ -889,25 +914,38 @@ export const getTurnosPendientesHistoricos = async (req, res) => {
         ok: true,
         mensaje: 'No se encontró un perfil asociado a tu usuario',
         data: [],
+        pagination: crearMetadataPaginacion(
+          paginacion.page,
+          paginacion.limit,
+          0,
+        ),
       });
     }
 
-    const turnosHistoricos = await Turno.find({
+    const filtro = {
       ...alcance,
       fecha: { $lte: finHoy },
       activo: true,
       estado: {
         $nin: [EstadoTurnoEnum.ATENDIDO, EstadoTurnoEnum.CANCELADO],
       },
-    })
-      .populate(pacientePopulate)
-      .populate('medico', 'nombre apellido')
-      .sort({ fecha: -1, hora: -1 });
+    };
+    const { data: turnosHistoricos, pagination } =
+      await ejecutarConsultaPaginada(
+        Turno.find(filtro)
+          .populate(pacientePopulate)
+          .populate('medico', 'nombre apellido')
+          .sort({ fecha: -1, hora: -1, _id: -1 }),
+        Turno,
+        filtro,
+        paginacion,
+      );
 
     return res.status(200).json({
       ok: true,
       mensaje: 'Turnos pendientes históricos obtenidos exitosamente',
       data: turnosHistoricos,
+      pagination,
     });
   } catch (error) {
     return res.status(500).json({
@@ -976,6 +1014,14 @@ export const cancelarTurno = async (req, res) => {
 export const getMisTurnos = async (req, res) => {
   try {
     const usuario = req.usuario || req.user;
+    const paginacion = obtenerParametrosPaginacion(req.query);
+    if (!paginacion) {
+      return res.status(400).json({
+        ok: false,
+        mensaje: 'Los parámetros page y limit deben ser enteros positivos.',
+      });
+    }
+
     const alcance = await obtenerFiltroPorUsuario(usuario);
     if (!alcance) {
       return res.status(404).json({
@@ -993,14 +1039,20 @@ export const getMisTurnos = async (req, res) => {
       filtro.fecha = { $gte: limite };
     }
 
-    const turnos = await Turno.find(filtro)
-      .populate('medico', 'nombre apellido')
-      .sort({ fecha: 1, hora: 1 });
+    const { data: turnos, pagination } = await ejecutarConsultaPaginada(
+      Turno.find(filtro)
+        .populate('medico', 'nombre apellido')
+        .sort({ fecha: 1, hora: 1, _id: 1 }),
+      Turno,
+      filtro,
+      paginacion,
+    );
 
     return res.status(200).json({
       ok: true,
       mensaje: 'Turnos obtenidos exitosamente',
       data: turnos,
+      pagination,
     });
   } catch (error) {
     return res.status(500).json({

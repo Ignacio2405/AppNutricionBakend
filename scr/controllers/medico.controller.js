@@ -3,11 +3,22 @@ import bcrypt from 'bcrypt';
 import { Medico } from '../models/Medico.js';
 import { Usuario} from '../models/Usuario.js';
 import { RolEnum } from '../enum/Rol.enum.js';
+import {
+    ejecutarConsultaPaginada,
+    obtenerParametrosPaginacion,
+} from '../utils/paginacion.js';
 
 
 export const getMedicos = async (req, res) => {
     try {
         const { apellido, dni } = req.query;
+        const paginacion = obtenerParametrosPaginacion(req.query);
+        if (!paginacion) {
+            return res.status(400).json({
+                ok: false,
+                mensaje: 'Los parámetros page y limit deben ser enteros positivos.'
+            });
+        }
         
         const filtro = { $or: [{ activo: true }, { activo: { $exists: false } }] };
 
@@ -18,12 +29,18 @@ export const getMedicos = async (req, res) => {
             filtro.dni = dni;
         }
 
-        const medicos = await Medico.find(filtro).populate('obraSocial');
+        const { data: medicos, pagination } = await ejecutarConsultaPaginada(
+            Medico.find(filtro).populate('obraSocial').sort({ _id: 1 }),
+            Medico,
+            filtro,
+            paginacion
+        );
 
         return res.status(200).json({
             ok: true,
             mensaje: 'Médicos obtenidos exitosamente',
-            data: medicos
+            data: medicos,
+            pagination
         });
     } catch (error) {
         return res.status(500).json({

@@ -1,6 +1,10 @@
 import mongoose from "mongoose";
 import { Pago } from "../models/Pago.js";
 import { EstadoPago } from "../enum/Pago.enum.js";
+import {
+  crearMetadataPaginacion,
+  obtenerParametrosPaginacion,
+} from "../utils/paginacion.js";
 
 export const crearPago = async (req, res) => {
   try {
@@ -64,6 +68,13 @@ export const obtenerPagos = async (req, res) => {
   try {
     const { paciente, estado, desde, hasta } = req.query;
     const filtro = { activo: true };
+    const paginacion = obtenerParametrosPaginacion(req.query);
+    if (!paginacion) {
+      return res.status(400).json({
+        ok: false,
+        mensaje: "Los parámetros page y limit deben ser enteros positivos.",
+      });
+    }
 
     if (paciente && mongoose.Types.ObjectId.isValid(paciente)) {
       filtro.paciente = new mongoose.Types.ObjectId(paciente);
@@ -88,22 +99,47 @@ export const obtenerPagos = async (req, res) => {
       }
     }
 
-    const pagos = await Pago.find(filtro)
-      .populate("paciente", "nombre apellido dni")
-      .sort({ fecha: -1, createdAt: -1 })
-      .lean();
-
-    const totalCobrado = pagos
-      .filter((p) => p.estado === EstadoPago.PAGADO)
-      .reduce((acc, p) => acc + (Number(p.monto) || 0), 0);
+    const [pagos, resumenPagos] = await Promise.all([
+      Pago.find(filtro)
+        .populate("paciente", "nombre apellido dni")
+        .sort({ fecha: -1, createdAt: -1, _id: -1 })
+        .skip(paginacion.skip)
+        .limit(paginacion.limit)
+        .lean(),
+      Pago.aggregate([
+        { $match: filtro },
+        {
+          $group: {
+            _id: null,
+            totalRegistros: { $sum: 1 },
+            totalCobrado: {
+              $sum: {
+                $cond: [
+                  { $eq: ["$estado", EstadoPago.PAGADO] },
+                  { $ifNull: ["$monto", 0] },
+                  0,
+                ],
+              },
+            },
+          },
+        },
+      ]),
+    ]);
+    const total = resumenPagos[0]?.totalRegistros || 0;
+    const totalCobrado = resumenPagos[0]?.totalCobrado || 0;
 
     return res.status(200).json({
       ok: true,
       mensaje: "Pagos obtenidos exitosamente.",
       data: pagos,
+      pagination: crearMetadataPaginacion(
+        paginacion.page,
+        paginacion.limit,
+        total,
+      ),
       resumen: {
-        totalRegistros: pagos.length,
-        totalCobrado: Number(totalCobrado.toFixed(2)),
+        totalRegistros: total,
+        totalCobrado: Number(Number(totalCobrado).toFixed(2)),
       },
     });
   } catch (error) {
