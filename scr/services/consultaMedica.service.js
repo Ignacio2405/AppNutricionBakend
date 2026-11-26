@@ -2,7 +2,7 @@ import { ConsultaMedica } from '../models/Consulta.js';
 import { Paciente } from '../models/Paciente.js';
 
 const PYTHON_API_URL = `${(
-  process.env.PYTHON_CALC_URL || 'http://127.0.0.1:8000'
+  process.env.PYTHON_CALC_URL || 'https://python-final-repo-1.onrender.com'
 ).replace(/\/+$/, '')}/calcular-antropometria`;
 const API_TOKEN = process.env.API_TOKEN || '';
 
@@ -138,7 +138,7 @@ const construirPayloadAntropometria = async (datos) => {
 
 const solicitarCalculosPython = async (payload) => {
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 5000);
+  const timeoutId = setTimeout(() => controller.abort(), 30000);
 
   const headers = {
     'Content-Type': 'application/json',
@@ -181,6 +181,13 @@ const solicitarCalculosPython = async (payload) => {
 
     const json = await response.json();
     return normalizarResultados(json);
+  } catch (error) {
+    if (error?.name === 'AbortError') {
+      throw new Error(
+        'El servicio de cálculo antropométrico tardó demasiado en responder (timeout).',
+      );
+    }
+    throw error;
   } finally {
     clearTimeout(timeoutId);
   }
