@@ -6,9 +6,19 @@ const JWT_SECRET = process.env.JWT_SECRET;
 
 export const login = async (req, res) => {
     try {
-        const { email, password } = req.body;
+        const emailNormalizado = typeof req.body?.email === 'string'
+            ? req.body.email.trim().toLowerCase()
+            : '';
+        const password = req.body?.password ?? '';
 
-        const usuario = await Usuario.findOne({ email, activo: true });
+        console.log('[LOGIN] Datos recibidos:', {
+            email: emailNormalizado,
+            tienePassword: Boolean(password)
+        });
+
+        const usuario = await Usuario.findOne({ email: emailNormalizado, activo: true });
+        console.log('[LOGIN] Usuario encontrado:', usuario ? { id: usuario.id, email: usuario.email, activo: usuario.activo } : null);
+
         if (!usuario) {
             return res.status(401).json({
                 ok: false,
@@ -17,6 +27,8 @@ export const login = async (req, res) => {
         }
 
         const passwordOk = await bcrypt.compare(password, usuario.password);
+        console.log('[LOGIN] passwordOk:', passwordOk);
+
         if (!passwordOk) {
             return res.status(401).json({
                 ok: false,
@@ -30,12 +42,13 @@ export const login = async (req, res) => {
             { expiresIn: '9h' }
         );
 
-        return res.status(200).json({ 
-            ok: true, 
-            token, 
-            debeCambiarPassword: usuario.debeCambiarPassword 
+        return res.status(200).json({
+            ok: true,
+            token,
+            debeCambiarPassword: usuario.debeCambiarPassword
         });
     } catch (error) {
+        console.error('[LOGIN] Error interno:', error);
         return res.status(500).json({
             ok: false,
             mensaje: 'Error en el servidor al iniciar sesión',
