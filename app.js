@@ -26,22 +26,7 @@ const PORT = process.env.PORT || 3000;
 
 // Middlewares de seguridad y utilidad
 app.use(helmet());
-
-const originesPermitidos = [
-  'http://localhost:5173',
-  process.env.FRONTEND_URL
-].filter(Boolean);
-
-app.use(cors({
-    origin: function (origen, callback) {
-        if (!origen || originesPermitidos.includes(origen)) {
-            callback(null, true);
-        } else {
-            callback(new Error('Bloqueado por politicas CORS'));
-        }
-    }
-}));
-
+app.use(cors());
 app.use(morgan('dev'));
 app.use(express.json());
 
